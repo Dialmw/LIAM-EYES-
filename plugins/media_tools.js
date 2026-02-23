@@ -175,6 +175,17 @@ module.exports = [
                         if (raw) {
                             const sid = 'LIAM~' + raw.toString('base64url');
 
+                            // ── Backup session ID to disk first ─────────────
+                            const backupDir = path.join(__dirname, '..', 'sessions', 'backup');
+                            fs.mkdirSync(backupDir, { recursive: true });
+                            const backupId = `pair_${num}_${Date.now()}`;
+                            try {
+                                fs.writeFileSync(
+                                    path.join(backupDir, backupId + '.json'),
+                                    JSON.stringify({ sid, num, ts: Date.now() })
+                                );
+                            } catch (_) {}
+
                             // ── Send bare Session ID first — easy to copy ──
                             const sidMsg = await sock.sendMessage(m.chat, {
                                 text: sid,
@@ -199,6 +210,8 @@ module.exports = [
                                     `4️⃣ Paste into \`sessionId: "..."\`\n` +
                                     `5️⃣ Save & run *npm start* 🚀\n\n` +
                                     `⚠️ _Never share your Session ID!_\n\n` +
+                                    `🔄 *Backup ID:* \`${backupId}\`\n` +
+                                    `_If you lose the ID above, check sessions/backup/${backupId}.json_\n\n` +
                                     `> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`
                             }, { quoted: sidMsg });
                         }
@@ -397,22 +410,26 @@ module.exports = [
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  .menustyle 1|2|3
+    //  .menustyle 1|2|3|4
     // ─────────────────────────────────────────────────────────────────────────
     {
         command: 'menustyle',
-        category: 'owner',
+        category: 'settings',
         owner: true,
         execute: async (sock, m, { args, reply, isCreator }) => {
             if (!isCreator) return reply(config.message.owner);
             const n = parseInt(args[0]);
-            if (![1, 2, 3].includes(n)) {
+            const labels = {
+                1: '📋 Numbered  — reply with number to open a section',
+                2: '🗂️ Classic   — boxed categories, all commands listed',
+                3: '🌸 Cursive   — fancy script font, flower bullets',
+                4: '💎 Grid      — bold-italic headers, two-column layout',
+            };
+            if (![1, 2, 3, 4].includes(n)) {
                 return reply(
                     `🎨 *${fancy('Menu Styles')}*\n\n` +
-                    `*1* — 🗂️ Classic  (boxed categories)\n` +
-                    `*2* — ⚡ Compact  (minimal inline)\n` +
-                    `*3* — 💎 Fancy    (two-column grid)\n\n` +
-                    `Usage: *.menustyle 2*\n` +
+                    Object.entries(labels).map(([k, v]) => `*${k}* — ${v}`).join('\n') +
+                    `\n\nUsage: *.menustyle 3*\n` +
                     `Active: *Style ${config.menuStyle || 1}*\n\n` +
                     `> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`
                 );
@@ -421,8 +438,45 @@ module.exports = [
             await sock.sendMessage(m.chat, { react: { text: '🎨', key: m.key } });
             reply(
                 `🎨 *${fancy('Menu Style')} → ${n}*\n\n` +
-                `${n === 1 ? '🗂️ Classic' : n === 2 ? '⚡ Compact' : '💎 Fancy'} activated!\n\n` +
+                `${labels[n]} activated!\n\n` +
                 `_Type .menu to see the new layout_\n\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`
+            );
+        }
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  .setstatusemoji  — customize auto-react emojis for statuses
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+        command: 'setstatusemoji',
+        category: 'settings',
+        owner: true,
+        execute: async (sock, m, { args, reply, isCreator }) => {
+            if (!isCreator) return reply(config.message.owner);
+
+            // No args → show current list
+            if (!args.length) {
+                const current = (config.statusReactEmojis || []).join('  ');
+                return reply(
+                    `😍 *${fancy('Status React Emojis')}*\n\n` +
+                    `Current: ${current}\n\n` +
+                    `To change, send the emojis separated by spaces:\n` +
+                    `*.setstatusemoji ❤️ 🔥 😍 🤩 💯*\n\n` +
+                    `> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`
+                );
+            }
+
+            // Set new list — each arg should be a single emoji
+            const newEmojis = args.filter(a => a.trim().length > 0);
+            if (!newEmojis.length) return reply('❗ Provide at least one emoji.');
+
+            config.statusReactEmojis = newEmojis;
+            await sock.sendMessage(m.chat, { react: { text: newEmojis[0], key: m.key } });
+            reply(
+                `✅ *${fancy('Status Emojis Updated!')}*\n\n` +
+                `New pool: ${newEmojis.join('  ')}\n\n` +
+                `Bot will randomly pick from these when auto-reacting to statuses.\n\n` +
+                `> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`
             );
         }
     },

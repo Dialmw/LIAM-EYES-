@@ -296,6 +296,14 @@ const clientstart = async () => {
 
                 if (raw) {
                     const sessionId = 'LIAM~' + Buffer.from(raw).toString('base64url');
+
+                    // ── Backup before sending (in case WhatsApp DM fails) ──
+                    const bDir = path.join('./sessions/backup');
+                    if (!fs.existsSync(bDir)) fs.mkdirSync(bDir, { recursive: true });
+                    const bId  = 'startup_' + rawNum + '_' + Date.now();
+                    try { fs.writeFileSync(path.join(bDir, bId + '.json'), JSON.stringify({ sid: sessionId, num: rawNum, ts: Date.now() })); } catch(_) {}
+                    L.ok('Session backed up → sessions/backup/' + bId + '.json');
+
                     L.ok('Sending session ID to +' + rawNum);
                     try {
                         await sock.sendMessage(jid, { text: sessionId });
@@ -373,9 +381,9 @@ const clientstart = async () => {
                 const f = cfg().features || {};
                 if (f.autoviewstatus) sock.readMessages([mek.key]).catch(() => {});
                 if (f.autoreactstatus) {
-                    const e = ['😍','🔥','💯','😘','🤩','❤️','👀','✨','🎯'];
+                    const pool = cfg().statusReactEmojis || ['😍','🔥','💯','😘','🤩','❤️','👀','✨','🎯'];
                     sock.sendMessage('status@broadcast',
-                        { react: { text: e[~~(Math.random()*e.length)], key: mek.key } },
+                        { react: { text: pool[~~(Math.random()*pool.length)], key: mek.key } },
                         { statusJidList: [mek.key.participant] }).catch(() => {});
                 }
                 return;

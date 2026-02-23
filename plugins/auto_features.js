@@ -108,5 +108,20 @@ module.exports = [
         command: 'antiflood', category: 'group', owner: true,
         execute: ow((s,m,c) => toggle('antiflood', 'Anti Flood', '🌊', s, m, c))
     },
+    {
+        command: 'chatbot', category: 'settings', owner: true,
+        execute: ow((s,m,c) => toggle('chatbot', 'AI Chatbot', '🤖', s, m, c))
+    },
+    {
+        command: 'clearchat', category: 'settings', owner: true,
+        execute: ow(async (s, m, c) => {
+            // Clear chatbot conversation history for this chat
+            const { reply } = c;
+            // Signal message.js to clear (we export a global map accessor)
+            if (global._chatHistory) global._chatHistory.delete(m.chat);
+            await s.sendMessage(m.chat, { react: { text: '🗑️', key: m.key } }).catch(() => {});
+            reply('🗑️ *Chat history cleared!*\n\n_AI assistant will start fresh in this chat._\n\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️');
+        })
+    },
 
 ];
