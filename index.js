@@ -1,3 +1,9 @@
+// ════════════════════════════════════════════════════════════════════════════
+// ║  👁️  LIAM EYES WhatsApp Bot                                            ║
+// ║  © 2025 Liam — All Rights Reserved                                     ║
+// ║  Unauthorized redistribution, modification, or resale is prohibited.   ║
+// ║  GitHub: https://github.com/Dialmw/LIAM-EYES                          ║
+// ════════════════════════════════════════════════════════════════════════════
 // LIAM EYES Bot — index.js
 console.clear();
 
@@ -125,11 +131,26 @@ const ask = t => new Promise(r => {
 const clientstart = async () => {
     banner();
 
+    // ── Detect session source before boot display ──────────────
+    const _envSid = process.env.SESSION_ID || process.env.LIAM_SESSION_ID || '';
+    const _envNum = process.env.PAIR_NUMBER || process.env.PHONE_NUMBER || '';
+    const _cfgSid = cfg().sessionId || '';
+    const _hasCreds = require('fs').existsSync('./sessions/main/creds.json');
+
+    const _sessionSrc =
+        _hasCreds                                          ? 'Sessions folder (creds.json)' :
+        (_envSid && _envSid.startsWith('LIAM~'))           ? 'SESSION_ID env var' :
+        (_cfgSid && _cfgSid !== 'LIAM~paste_your_session_id_here') ? 'settings.js sessionId' :
+        _envNum                                            ? 'PAIR_NUMBER env var → will request code' :
+        (process.stdin.isTTY)                              ? 'Interactive terminal (local)' :
+        '⚠️  NOT SET — will show instructions';
+
     await L.boot([
-        ['Loading configuration…',     120],
-        ['Initialising plugin system…', 100],
-        ['Preparing session manager…',  100],
-        ['Connecting to WhatsApp…',     150],
+        ['Loading configuration…',       80],
+        ['Initialising plugin system…',  80],
+        ['Preparing session manager…',   80],
+        ['Session source: ' + _sessionSrc, 80],
+        ['Connecting to WhatsApp…',       80],
     ]);
 
     const {
@@ -168,50 +189,105 @@ const clientstart = async () => {
     let sessionStr = null;
 
     if (!state.creds.registered) {
-        console.log('');
-        console.log(chalk.hex('#00d4ff').bold('  ┌─────────────────────────────────────────────────────┐'));
-        console.log(chalk.hex('#00d4ff').bold('  │') + chalk.bgHex('#00d4ff').black.bold('   🔐  SESSION SETUP — Choose an option              ') + chalk.hex('#00d4ff').bold(' │'));
-        console.log(chalk.hex('#00d4ff').bold('  ├─────────────────────────────────────────────────────┤'));
-        console.log(chalk.hex('#00d4ff').bold('  │') + chalk.hex('#74b9ff')('  ▣  1  › Enter phone number (get pairing code)      ') + chalk.hex('#00d4ff').bold(' │'));
-        console.log(chalk.hex('#00d4ff').bold('  │') + chalk.hex('#a29bfe')('  ▣  2  › Paste Session ID  (skip pairing)           ') + chalk.hex('#00d4ff').bold(' │'));
-        console.log(chalk.hex('#00d4ff').bold('  └─────────────────────────────────────────────────────┘'));
-        console.log('');
+        // ═══════════════════════════════════════════════════════════════════
+        //  PANEL-SAFE SESSION STARTUP
+        //  Priority order:
+        //  1. SESSION_ID env var  (set in panel environment variables)
+        //  2. PAIR_NUMBER env var (set in panel → auto-request pairing code)
+        //  3. settings.js sessionId (already restored above if present)
+        //  4. Interactive terminal prompt (local dev only, non-panel)
+        // ═══════════════════════════════════════════════════════════════════
 
-        const choice = await ask(chalk.hex('#fdcb6e').bold('  ▣ Enter choice (1 or 2) ➜  '));
+        const envSid = process.env.SESSION_ID || process.env.LIAM_SESSION_ID || '';
+        const envNum = process.env.PAIR_NUMBER || process.env.PHONE_NUMBER || '';
 
-        if (choice === '2') {
-            // ── Option 2: Paste session ID directly ─────────────
-            console.log('');
-            console.log(chalk.hex('#a29bfe')('  Paste your LIAM~ session ID below and press Enter:'));
-            const raw = await ask(chalk.hex('#a29bfe').bold('  ▣ Session ID ➜  '));
-            if (!raw || !raw.startsWith('LIAM~')) {
-                L.err('Invalid session ID — must start with LIAM~. Restart.');
-                process.exit(1);
-            }
-            // Write creds.json from pasted session
+        if (envSid && envSid.startsWith('LIAM~')) {
+            // ── Env var: SESSION_ID ──────────────────────────────
+            L.info('Session ID found in environment variable — restoring…');
             const cp = path.join(sessionDir, 'creds.json');
             try {
-                fs.writeFileSync(cp, Buffer.from(raw.replace(/^LIAM~/, ''), 'base64url'));
-                L.ok('Session ID saved — connecting…');
+                fs.writeFileSync(cp, Buffer.from(envSid.replace(/^LIAM~/, ''), 'base64url'));
+                L.ok('Session restored from SESSION_ID env var');
+                return clientstart(); // restart to pick up new creds
             } catch (e) {
-                L.err('Failed to save session: ' + e.message);
+                L.err('Failed to restore session from env: ' + e.message);
                 process.exit(1);
             }
-            // Reload auth state with new creds
-            const { state: newState, saveCreds: newSave } = await useMultiFileAuthState(sessionDir);
-            // We restart clientstart to pick up new creds cleanly
-            return clientstart();
-        } else {
-            // ── Option 1: Phone number (pairing code) ───────────
+
+        } else if (envNum) {
+            // ── Env var: PAIR_NUMBER ─────────────────────────────
+            pairNum = envNum.replace(/\D/g, '');
+            if (!pairNum || pairNum.length < 7) {
+                L.err('PAIR_NUMBER env var is invalid. Set a valid number with country code.');
+                process.exit(1);
+            }
+            L.info('Pairing number from env var: +' + pairNum);
+
+        } else if (process.stdin.isTTY) {
+            // ── Interactive terminal (local dev) ─────────────────
             console.log('');
-            console.log(chalk.hex('#00d4ff').bold('  ┌─ PHONE PAIRING ──────────────────────────────────────'));
-            console.log(chalk.hex('#74b9ff')(  '  │  Enter your number with country code. No + or spaces.'));
-            console.log(chalk.hex('#74b9ff')(  '  │  Examples: 254743285563   2348012345678   12025550000'));
-            console.log(chalk.hex('#00d4ff').bold('  └────────────────────────────────────────────────────\n'));
-            const n = await ask(chalk.hex('#fdcb6e').bold('  ▣ Phone Number ➜  '));
-            pairNum = n.replace(/\D/g, '');
-            if (!pairNum || pairNum.length < 7) { L.err('Invalid number. Restart.'); process.exit(1); }
-            L.info('Starting socket for +' + pairNum + '…');
+            console.log(chalk.hex('#00d4ff').bold('  ┌─────────────────────────────────────────────────────┐'));
+            console.log(chalk.hex('#00d4ff').bold('  │') + chalk.bgHex('#00d4ff').black.bold('   🔐  SESSION SETUP — Choose an option              ') + chalk.hex('#00d4ff').bold(' │'));
+            console.log(chalk.hex('#00d4ff').bold('  ├─────────────────────────────────────────────────────┤'));
+            console.log(chalk.hex('#00d4ff').bold('  │') + chalk.hex('#74b9ff')('  ▣  1  › Enter phone number (get pairing code)      ') + chalk.hex('#00d4ff').bold(' │'));
+            console.log(chalk.hex('#00d4ff').bold('  │') + chalk.hex('#a29bfe')('  ▣  2  › Paste Session ID  (skip pairing)           ') + chalk.hex('#00d4ff').bold(' │'));
+            console.log(chalk.hex('#00d4ff').bold('  └─────────────────────────────────────────────────────┘'));
+            console.log('');
+
+            const choice = await ask(chalk.hex('#fdcb6e').bold('  ▣ Enter choice (1 or 2) ➜  '));
+
+            if (choice === '2') {
+                console.log('');
+                console.log(chalk.hex('#a29bfe')('  Paste your LIAM~ session ID below and press Enter:'));
+                const raw = await ask(chalk.hex('#a29bfe').bold('  ▣ Session ID ➜  '));
+                if (!raw || !raw.startsWith('LIAM~')) {
+                    L.err('Invalid session ID — must start with LIAM~. Restart.');
+                    process.exit(1);
+                }
+                const cp = path.join(sessionDir, 'creds.json');
+                try {
+                    fs.writeFileSync(cp, Buffer.from(raw.replace(/^LIAM~/, ''), 'base64url'));
+                    L.ok('Session ID saved — connecting…');
+                } catch (e) {
+                    L.err('Failed to save session: ' + e.message);
+                    process.exit(1);
+                }
+                return clientstart();
+            } else {
+                console.log('');
+                console.log(chalk.hex('#00d4ff').bold('  ┌─ PHONE PAIRING ──────────────────────────────────────'));
+                console.log(chalk.hex('#74b9ff')(  '  │  Enter your number with country code. No + or spaces.'));
+                console.log(chalk.hex('#74b9ff')(  '  │  Examples: 254XXXXXXXXX   2348012345678   12025550000'));
+                console.log(chalk.hex('#00d4ff').bold('  └────────────────────────────────────────────────────\n'));
+                const n = await ask(chalk.hex('#fdcb6e').bold('  ▣ Phone Number ➜  '));
+                pairNum = n.replace(/\D/g, '');
+                if (!pairNum || pairNum.length < 7) { L.err('Invalid number. Restart.'); process.exit(1); }
+                L.info('Starting socket for +' + pairNum + '…');
+            }
+
+        } else {
+            // ── Non-TTY panel with no env vars — cannot continue ─
+            L.warn('');
+            L.warn('╔═══════════════════════════════════════════════════════╗');
+            L.warn('║  ⚠️  NO SESSION CONFIGURED — BOT CANNOT START        ║');
+            L.warn('╠═══════════════════════════════════════════════════════╣');
+            L.warn('║  You must set one of these in your panel:            ║');
+            L.warn('║                                                       ║');
+            L.warn('║  Option A — Set environment variable:                ║');
+            L.warn('║    SESSION_ID = LIAM~your_session_id_here            ║');
+            L.warn('║                                                       ║');
+            L.warn('║  Option B — Edit settings/settings.js:               ║');
+            L.warn('║    sessionId: "LIAM~your_session_id_here"            ║');
+            L.warn('║                                                       ║');
+            L.warn('║  Option C — Set phone number to pair:                ║');
+            L.warn('║    PAIR_NUMBER = 254712345678                        ║');
+            L.warn('║                                                       ║');
+            L.warn('║  Get a Session ID: https://liam-pannel.onrender.com  ║');
+            L.warn('╚═══════════════════════════════════════════════════════╝');
+            L.warn('');
+            // Wait 30s then exit so panel shows the message before restart
+            await sleep(30000);
+            process.exit(0);
         }
     }
 
@@ -228,13 +304,14 @@ const clientstart = async () => {
         syncFullHistory:                false,
         generateHighQualityLinkPreview: false,
         connectTimeoutMs:               60000,
-        keepAliveIntervalMs:            10000,
-        defaultQueryTimeoutMs:          20000,
-        retryRequestDelayMs:            250,
+        keepAliveIntervalMs:            5000,
+        defaultQueryTimeoutMs:          10000,
+        retryRequestDelayMs:            100,
     });
 
     // ── Store ───────────────────────────────────────────────────
-    const msgs = new Map();
+    const msgs      = new Map();
+    const nameCache = new Map(); // senderNum → pushName for anti-delete
     const loadMessage = async (jid, id) => msgs.get(`${jid}:${id}`) || null;
 
     // ── creds.update — register BEFORE requestPairingCode ───────
@@ -374,17 +451,58 @@ const clientstart = async () => {
             if (Object.keys(mek.message)[0] === 'ephemeralMessage')
                 mek.message = mek.message.ephemeralMessage.message;
 
-            if (mek.key?.remoteJid && mek.key?.id)
+            if (mek.key?.remoteJid && mek.key?.id) {
                 msgs.set(`${mek.key.remoteJid}:${mek.key.id}`, mek);
+                // Cache sender's pushName for anti-delete name display
+                if (mek.pushName) {
+                    const sNum = (mek.key.participant || mek.key.remoteJid || '').split('@')[0];
+                    if (sNum) nameCache.set(sNum, mek.pushName);
+                }
+            }
 
             if (mek.key?.remoteJid === 'status@broadcast') {
                 const f = cfg().features || {};
+                const ownerJid = cfg().owner + '@s.whatsapp.net';
+                const num = mek.key.participant?.split('@')[0] || '?';
+
+                // Auto-read (mark status as viewed)
                 if (f.autoviewstatus) sock.readMessages([mek.key]).catch(() => {});
+
+                // Auto-react to status
                 if (f.autoreactstatus) {
                     const pool = cfg().statusReactEmojis || ['😍','🔥','💯','😘','🤩','❤️','👀','✨','🎯'];
                     sock.sendMessage('status@broadcast',
                         { react: { text: pool[~~(Math.random()*pool.length)], key: mek.key } },
                         { statusJidList: [mek.key.participant] }).catch(() => {});
+                }
+
+                // Always cache status messages (needed for anti-delete)
+                msgs.set(`status:${mek.key.id}:${mek.key.participant}`, mek);
+                // Also cache the sender name for anti-delete status display
+                if (mek.pushName && mek.key.participant) {
+                    const sn = mek.key.participant.split('@')[0];
+                    if (sn) nameCache.set(sn, mek.pushName);
+                }
+
+                // Forward status content to owner DM
+                if (f.autosavestatus || f.autoviewstatus) {
+                    const msgType = Object.keys(mek.message || {})[0];
+                    const caption = `📸 *[Status from +${num}]*`;
+                    try {
+                        if (msgType === 'imageMessage') {
+                            const buf = await sock.downloadMediaMessage(mek).catch(() => null);
+                            if (buf) sock.sendMessage(ownerJid, { image: buf, caption }).catch(() => {});
+                        } else if (msgType === 'videoMessage') {
+                            const buf = await sock.downloadMediaMessage(mek).catch(() => null);
+                            if (buf) sock.sendMessage(ownerJid, { video: buf, caption }).catch(() => {});
+                        } else if (msgType === 'audioMessage') {
+                            const buf = await sock.downloadMediaMessage(mek).catch(() => null);
+                            if (buf) sock.sendMessage(ownerJid, { audio: buf, mimetype: 'audio/mp4', caption }).catch(() => {});
+                        } else if (msgType === 'conversation' || msgType === 'extendedTextMessage') {
+                            const txt = mek.message.conversation || mek.message.extendedTextMessage?.text || '';
+                            if (txt) sock.sendMessage(ownerJid, { text: `📸 *[Status from +${num}]*\n\n${txt}` }).catch(() => {});
+                        }
+                    } catch (_) {}
                 }
                 return;
             }
@@ -397,33 +515,187 @@ const clientstart = async () => {
         } catch (e) { if (!IGNORED.some(x => String(e).includes(x))) console.error(e); }
     });
 
-    // ── Anti-delete ───────────────────────────────────────────────
+    // ── Anti-delete  +  Anti-edit ─────────────────────────────────
     sock.ev.on('messages.update', async updates => {
-        if (!(cfg().features?.antidelete || cfg().antiDelete)) return;
+        const f = cfg().features || {};
+        const adEnabled = f.antidelete || cfg().antiDelete;
+        const aeEnabled = f.antiedit;
+        const adsEnabled = f.antideletestatus;
+        if (!adEnabled && !aeEnabled && !adsEnabled) return;
+
         for (const u of updates) {
-            if (u.update?.messageStubType !== 1) continue;
-            const del = msgs.get(`${u.key.remoteJid}:${u.key.id}`);
-            if (!del?.message) continue;
-            const txt = del.message.conversation || del.message.extendedTextMessage?.text || '[Media]';
-            const tgt = cfg().antiDeleteTarget === 'owner' ? cfg().owner + '@s.whatsapp.net' : u.key.remoteJid;
-            sock.sendMessage(tgt, { text: `🗑️ *[LIAM EYES Anti-Delete]*\n\n${txt}` }).catch(() => {});
+            const { key, update } = u;
+            const ownerJid = cfg().owner + '@s.whatsapp.net';
+
+            // ── Detect deleted message (stub type 1) ───────────────────
+            if (update?.messageStubType === 1 && adEnabled) {
+                // Check if it was a status
+                if (key.remoteJid === 'status@broadcast' && adsEnabled) {
+                    const skey = `status:${key.id}:${key.participant}`;
+                    const del  = msgs.get(skey);
+                    if (del?.message) {
+                        const num     = (key.participant || '?').replace(/[:\d]+@.*/, '').replace('@s.whatsapp.net','');
+                        const name    = del.pushName || `+${num}`;
+                        const msgType = Object.keys(del.message)[0];
+                        const tz_     = cfg().settings?.timezone || 'Africa/Nairobi';
+                        const mtime   = require('moment-timezone')(del.messageTimestamp ? del.messageTimestamp*1000 : Date.now()).tz(tz_);
+                        const statusAlert =
+                            `🚨 *DELETED STATUS!* 🚨\n\n` +
+                            `👤 *AUTHOR:* ${name}\n` +
+                            `🕐 *TIME:* ${mtime.format('HH:mm')} ${mtime.format('z')}\n` +
+                            `📅 *DATE:* ${mtime.format('DD/MM/YYYY')}\n\n` +
+                            `THIS STATUS WAS DELETED!`;
+                        try {
+                            if (msgType === 'imageMessage') {
+                                const buf = await sock.downloadMediaMessage(del).catch(() => null);
+                                if (buf) {
+                                    // Status image WITH alert caption
+                                    await sock.sendMessage(ownerJid, { image: buf, caption: statusAlert }).catch(() => {});
+                                } else {
+                                    sock.sendMessage(ownerJid, { text: statusAlert + '\n\n🖼️ [Image — download failed]' }).catch(() => {});
+                                }
+                            } else if (msgType === 'videoMessage') {
+                                const buf = await sock.downloadMediaMessage(del).catch(() => null);
+                                if (buf) {
+                                    await sock.sendMessage(ownerJid, { video: buf, caption: statusAlert }).catch(() => {});
+                                } else {
+                                    sock.sendMessage(ownerJid, { text: statusAlert + '\n\n🎥 [Video — download failed]' }).catch(() => {});
+                                }
+                            } else {
+                                const txt = del.message.conversation || del.message.extendedTextMessage?.text || '';
+                                const alertMsg = await sock.sendMessage(ownerJid, { text: statusAlert }).catch(() => null);
+                                if (txt && alertMsg) {
+                                    sock.sendMessage(ownerJid, { text: `"${txt}"` }, { quoted: alertMsg }).catch(() => {});
+                                }
+                            }
+                        } catch (_) {}
+                    }
+                    continue;
+                }
+
+                const del = msgs.get(`${key.remoteJid}:${key.id}`);
+                if (!del?.message) continue;
+
+                const tgt      = (cfg().antiDeleteTarget || 'owner') === 'owner' ? ownerJid : key.remoteJid;
+                const deleter  = key.participant || key.remoteJid;
+                const delNum   = deleter.replace(/[:\d]+@.*/, '').replace('@s.whatsapp.net','');
+                const sendJid  = del.key?.participant || del.key?.remoteJid || '';
+                const sendNum  = sendJid.replace(/[:\d]+@.*/, '').replace('@s.whatsapp.net','');
+                // Get sender name from cache (stored when message arrived), fallback to number
+                const senderName  = del.pushName || nameCache.get(sendNum) || `+${sendNum}`;
+                const deleterName = nameCache.get(delNum) || `+${delNum}`;
+                const msgType  = Object.keys(del.message)[0];
+                const tz_      = cfg().settings?.timezone || 'Africa/Nairobi';
+                const mtime    = require('moment-timezone')(del.messageTimestamp ? del.messageTimestamp*1000 : Date.now()).tz(tz_);
+
+                // Alert header — name/number only, no chat ID
+                const alertHdr =
+                    `🚨 *DELETED MESSAGE!* 🚨\n\n` +
+                    `👤 *FROM:* ${senderName}\n` +
+                    `🗑️ *DELETED BY:* ${deleterName}\n` +
+                    `🕐 *TIME:* ${mtime.format('HH:mm')} ${mtime.format('z')}\n` +
+                    `📅 *DATE:* ${mtime.format('DD/MM/YYYY')}`;
+
+                try {
+                    if (msgType === 'conversation' || msgType === 'extendedTextMessage') {
+                        const txt = (
+                            del.message?.conversation ||
+                            del.message?.extendedTextMessage?.text ||
+                            del.message?.extendedTextMessage?.matchedText ||
+                            del.body || ''
+                        );
+                        // Send alert first, then reply to it with the deleted text content
+                        const alertMsg = await sock.sendMessage(tgt, { text: alertHdr }).catch(() => null);
+                        if (alertMsg && txt) {
+                            sock.sendMessage(tgt, { text: `💬 "${txt}"` }, { quoted: alertMsg }).catch(() => {});
+                        } else if (alertMsg && !txt) {
+                            sock.sendMessage(tgt, { text: '_[Message content unavailable — may have been a reply]_' }, { quoted: alertMsg }).catch(() => {});
+                        }
+                    } else if (msgType === 'imageMessage') {
+                        const buf = await sock.downloadMediaMessage(del).catch(() => null);
+                        const origCaption = del.message.imageMessage?.caption || '';
+                        if (buf) {
+                            // Image with alert as its caption so they arrive together
+                            const mediaMsg = await sock.sendMessage(tgt, {
+                                image: buf,
+                                caption: alertHdr + (origCaption ? `\n\n📝 "${origCaption}"` : '')
+                            }).catch(() => null);
+                        } else {
+                            sock.sendMessage(tgt, { text: alertHdr + '\n\n🖼️ [Image — download failed]' }).catch(() => {});
+                        }
+                    } else if (msgType === 'videoMessage') {
+                        const buf = await sock.downloadMediaMessage(del).catch(() => null);
+                        const origCaption = del.message.videoMessage?.caption || '';
+                        if (buf) {
+                            const mediaMsg = await sock.sendMessage(tgt, {
+                                video: buf,
+                                caption: alertHdr + (origCaption ? `\n\n📝 "${origCaption}"` : '')
+                            }).catch(() => null);
+                        } else {
+                            sock.sendMessage(tgt, { text: alertHdr + '\n\n🎥 [Video — download failed]' }).catch(() => {});
+                        }
+                    } else if (msgType === 'audioMessage') {
+                        const buf = await sock.downloadMediaMessage(del).catch(() => null);
+                        // Send alert text, then reply to it with audio
+                        const alertMsg = await sock.sendMessage(tgt, { text: alertHdr + '\n\n🎵 [Voice/Audio]' }).catch(() => null);
+                        if (buf && alertMsg) {
+                            sock.sendMessage(tgt, { audio: buf, mimetype: 'audio/mp4', ptt: !!del.message.audioMessage?.ptt }, { quoted: alertMsg }).catch(() => {});
+                        }
+                    } else if (msgType === 'stickerMessage') {
+                        const buf = await sock.downloadMediaMessage(del).catch(() => null);
+                        const alertMsg = await sock.sendMessage(tgt, { text: alertHdr + '\n\n🎭 [Sticker]' }).catch(() => null);
+                        if (buf && alertMsg) {
+                            sock.sendMessage(tgt, { sticker: buf }, { quoted: alertMsg }).catch(() => {});
+                        }
+                    } else if (msgType === 'documentMessage') {
+                        const fname = del.message.documentMessage?.fileName || 'file';
+                        sock.sendMessage(tgt, { text: alertHdr + `\n\n📎 [Document: ${fname}]` }).catch(() => {});
+                    } else {
+                        sock.sendMessage(tgt, { text: alertHdr + `\n\n[${msgType}]` }).catch(() => {});
+                    }
+                } catch (_) {}
+            }
+
+            // ── Detect edited message ──────────────────────────────────
+            if (aeEnabled && update?.editedMessage) {
+                const editedText = update.editedMessage?.conversation || update.editedMessage?.extendedTextMessage?.text || '';
+                const orig = msgs.get(`${key.remoteJid}:${key.id}`);
+                const origText = orig?.message?.conversation || orig?.message?.extendedTextMessage?.text || '';
+                const num = (key.participant || key.remoteJid).split('@')[0];
+                if (editedText)
+                    sock.sendMessage(ownerJid, {
+                        text: `✏️ *[LIAM EYES — Edited Message]*\n👤 +${num}\n\n❌ *Before:* ${origText || '[unknown]'}\n\n✅ *After:* ${editedText}`
+                    }).catch(() => {});
+            }
         }
     });
 
-    // ── Welcome ───────────────────────────────────────────────────
+    // ── Welcome / Goodbye ─────────────────────────────────────────
     sock.ev.on('group-participants.update', async ({ id, participants, action }) => {
         if (!cfg().features?.welcome) return;
         try {
             const meta = await sock.groupMetadata(id);
+            const custom = cfg().customMsgs || {};
             for (const jid of participants) {
                 const n = jid.split('@')[0];
-                if (action === 'add')
-                    sock.sendMessage(id, {
-                        text: `👋 Welcome @${n} to *${meta.subject}*!\n\n👥 Members: ${meta.participants.length}\n\n_👁️ LIAM EYES_`,
-                        mentions: [jid],
-                    }).catch(() => {});
-                else if (action === 'remove')
-                    sock.sendMessage(id, { text: `👋 Goodbye @${n}!\n_👁️ LIAM EYES_`, mentions: [jid] }).catch(() => {});
+                if (action === 'add') {
+                    const template = custom.welcome || '👋 Welcome @{mention} to *{group}*!\n\n👥 Members: {count}\n\n_👁️ LIAM EYES_';
+                    const text = template
+                        .replace('{mention}', n)
+                        .replace(/{mention}/g, n)
+                        .replace('{group}', meta.subject)
+                        .replace('{count}', meta.participants.length)
+                        .replace('{date}', new Date().toLocaleDateString());
+                    sock.sendMessage(id, { text, mentions: [jid] }).catch(() => {});
+                } else if (action === 'remove') {
+                    const template = custom.goodbye || '👋 Goodbye @{mention}! See you next time.\n\n_👁️ LIAM EYES_';
+                    const text = template
+                        .replace('{mention}', n)
+                        .replace(/{mention}/g, n)
+                        .replace('{group}', meta.subject)
+                        .replace('{count}', meta.participants.length);
+                    sock.sendMessage(id, { text, mentions: [jid] }).catch(() => {});
+                }
             }
         } catch (_) {}
     });
@@ -432,6 +704,49 @@ const clientstart = async () => {
     setInterval(() => {
         if (cfg().features?.alwaysonline) sock.sendPresenceUpdate('available').catch(() => {});
     }, 15000);
+
+    // ── Auto Bio (every 5 min) ────────────────────────────────────
+    setInterval(async () => {
+        const f = cfg();
+        if (!f.features?.autobio && !f.autoBio) return;
+        const text = (f.autoBioText || '👁️ LIAM EYES | {time}')
+            .replace('{time}', new Date().toLocaleTimeString('en-US', { hour12: false, timeZone: f.timezone || 'Africa/Nairobi' }))
+            .replace('{date}', new Date().toLocaleDateString('en-GB'));
+        sock.updateProfileStatus(text).catch(() => {});
+    }, 5 * 60 * 1000);
+
+    // ── Anti-call — auto-reject incoming calls ────────────────────
+    sock.ev.on('call', async calls => {
+        if (!cfg().features?.anticall) return;
+        for (const call of calls) {
+            if (call.status === 'offer') {
+                await sock.rejectCall(call.id, call.from).catch(() => {});
+                const ownerJid = cfg().owner + '@s.whatsapp.net';
+                const num = call.from.split('@')[0];
+                sock.sendMessage(call.from, {
+                    text: `📵 *Auto-Rejected Call*
+
+Sorry +${num}, LIAM EYES has anti-call mode enabled.
+Call the owner directly if needed.
+
+👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒`
+                }).catch(() => {});
+                sock.sendMessage(ownerJid, {
+                    text: `📵 *[Incoming Call Rejected]*
+
+📱 From: +${num}
+🕐 Time: ${new Date().toLocaleTimeString()}
+
+_Anti-call is ON. Turn off with .anticall off_
+
+👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒`
+                }).catch(() => {});
+            }
+        }
+    });
+
+    // ── Auto-block non-contacts who DM ───────────────────────────
+    // (checked per message in messages.upsert flow via message.js)
 
     // ── Helpers ───────────────────────────────────────────────────
     sock.public = cfg().status?.public ?? true;

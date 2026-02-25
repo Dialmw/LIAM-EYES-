@@ -1,14 +1,20 @@
+// ════════════════════════════════════════════════════════════════════════════
+// ║  👁️  LIAM EYES WhatsApp Bot — message.js                              ║
+// ║  © 2025 Liam — All Rights Reserved                                     ║
+// ════════════════════════════════════════════════════════════════════════════
 'use strict';
+
 const config = require('./settings/config');
 const fs     = require('fs');
 const path   = require('path');
 const chalk  = require('chalk');
 const axios  = require('axios');
-const { fetchWithTimeout } = require('./library/function');
-const { fquoted }   = require('./library/quoted');
-const Api = require('./library/Api');
+const os     = require('os');
+const moment = require('moment-timezone');
 
-const image = fs.readFileSync('./thumbnail/image.jpg');
+const image = (() => {
+    try { return fs.readFileSync('./thumbnail/image.jpg'); } catch { return Buffer.alloc(0); }
+})();
 
 let _jidNorm;
 const loadUtils = async () => {
@@ -18,45 +24,46 @@ const loadUtils = async () => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  UNICODE FONT HELPERS
+//  UNICODE FONT CONVERTERS
 // ─────────────────────────────────────────────────────────────────────────────
-
-// Bold serif (𝐀𝐁𝐂 𝟏𝟐𝟑)
-const bold = t => t.split('').map(c => {
-    const U = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', L = 'abcdefghijklmnopqrstuvwxyz', N = '0123456789';
-    const uB = '𝐀𝐁𝐂𝐃𝐄𝐅𝐆𝐇𝐈𝐉𝐊𝐋𝐌𝐍𝐎𝐏𝐐𝐑𝐒𝐓𝐔𝐕𝐖𝐗𝐘𝐙';
-    const lB = '𝐚𝐛𝐜𝐝𝐞𝐟𝐠𝐡𝐢𝐣𝐤𝐥𝐦𝐧𝐨𝐩𝐪𝐫𝐬𝐭𝐮𝐯𝐰𝐱𝐲𝐳';
-    const nB = '𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟗';
-    const ui = U.indexOf(c); if (ui >= 0) return [...uB][ui];
-    const li = L.indexOf(c); if (li >= 0) return [...lB][li];
-    const ni = N.indexOf(c); if (ni >= 0) return [...nB][ni];
+const _map = (maps, c) => {
+    for (const [src, dst] of maps) {
+        const i = src.indexOf(c);
+        if (i >= 0) return [...dst][i];
+    }
     return c;
-}).join('');
-
-// Bold italic (𝑨𝑩𝑪)
-const boldItalic = t => t.split('').map(c => {
-    const U = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', L = 'abcdefghijklmnopqrstuvwxyz';
-    const uI = '𝑨𝑩𝑪𝑫𝑬𝑭𝑮𝑯𝑰𝑱𝑲𝑳𝑴𝑵𝑶𝑷𝑸𝑹𝑺𝑻𝑼𝑽𝑾𝑿𝒀𝒁';
-    const lI = '𝒂𝒃𝒄𝒅𝒆𝒇𝒈𝒉𝒊𝒋𝒌𝒍𝒎𝒏𝒐𝒑𝒒𝒓𝒔𝒕𝒖𝒗𝒘𝒙𝒚𝒛';
-    const ui = U.indexOf(c.toUpperCase()); if (ui >= 0) return [...(c === c.toUpperCase() ? uI : lI)][ui];
-    return c;
-}).join('');
-
-// Script/cursive (𝓐𝓑𝓒)
-const script = t => t.split('').map(c => {
-    const U = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', L = 'abcdefghijklmnopqrstuvwxyz';
-    const uS = '𝓐𝓑𝓒𝓓𝓔𝓕𝓖𝓗𝓘𝓙𝓚𝓛𝓜𝓝𝓞𝓟𝓠𝓡𝓢𝓣𝓤𝓥𝓦𝓧𝓨𝓩';
-    const lS = '𝓪𝓫𝓬𝓭𝓮𝓯𝓰𝓱𝓲𝓳𝓴𝓵𝓶𝓷𝓸𝓹𝓺𝓻𝓼𝓽𝓾𝓿𝔀𝔁𝔂𝔃';
-    const ui = U.indexOf(c); if (ui >= 0) return [...uS][ui];
-    const li = L.indexOf(c); if (li >= 0) return [...lS][li];
-    return c;
-}).join('');
-
-// Bold numbers only  𝟏 𝟐 𝟑...
-const boldNum = n => {
-    const map = ['𝟎','𝟏','𝟐','𝟑','𝟒','𝟓','𝟔','𝟕','𝟖','𝟗'];
-    return String(n).split('').map(d => map[+d] || d).join('');
 };
+const bold = t => t.split('').map(c => _map([
+    ['ABCDEFGHIJKLMNOPQRSTUVWXYZ','𝐀𝐁𝐂𝐃𝐄𝐅𝐆𝐇𝐈𝐉𝐊𝐋𝐌𝐍𝐎𝐏𝐐𝐑𝐒𝐓𝐔𝐕𝐖𝐗𝐘𝐙'],
+    ['abcdefghijklmnopqrstuvwxyz','𝐚𝐛𝐜𝐝𝐞𝐟𝐠𝐡𝐢𝐣𝐤𝐥𝐦𝐧𝐨𝐩𝐪𝐫𝐬𝐭𝐮𝐯𝐰𝐱𝐲𝐳'],
+], c)).join('');
+const script = t => t.split('').map(c => _map([
+    ['ABCDEFGHIJKLMNOPQRSTUVWXYZ','𝓐𝓑𝓒𝓓𝓔𝓕𝓖𝓗𝓘𝓙𝓚𝓛𝓜𝓝𝓞𝓟𝓠𝓡𝓢𝓣𝓤𝓥𝓦𝓧𝓨𝓩'],
+    ['abcdefghijklmnopqrstuvwxyz','𝓪𝓫𝓬𝓭𝓮𝓯𝓰𝓱𝓲𝓳𝓴𝓵𝓶𝓷𝓸𝓹𝓺𝓻𝓼𝓽𝓾𝓿𝔀𝔁𝔂𝔃'],
+], c)).join('');
+
+// Digit decorator  3 → 𝟑
+const D = n => String(n).split('').map(d => '𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟗'[+d] ?? d).join('');
+
+// Star border ─ exact style from user's screenshot
+const STAR   = '★★★★★★★★★★★★★';
+const BOX_T  = `╔${STAR}╗`;
+const BOX_B  = `╚${STAR}╝`;
+const sBox   = (...lines) => [BOX_T, ...lines, BOX_B].join('\n');
+
+// Time helpers
+const tz = () => config.settings?.timezone || 'Africa/Nairobi';
+const fmt_time = (ts) => moment(ts ? ts * 1000 : Date.now()).tz(tz()).format('HH:mm');
+const fmt_date = (ts) => moment(ts ? ts * 1000 : Date.now()).tz(tz()).format('DD/MM/YYYY');
+const fmt_tz   = () => moment().tz(tz()).format('z');
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  BOT STATE — kill/wake switch
+// ─────────────────────────────────────────────────────────────────────────────
+let BOT_PAUSED = false;
+global._botPaused = () => BOT_PAUSED;
+global._botKill   = () => { BOT_PAUSED = true; };
+global._botWake   = () => { BOT_PAUSED = false; };
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  PLUGIN LOADER
@@ -67,231 +74,232 @@ class PluginLoader {
         this.categories = new Map();
         this.dir        = path.join(__dirname, 'plugins');
 
+        // 21 primary display categories (indices 1-21)
         this.catDef = [
-            { key: 'ai',        label: 'AI',         emoji: '🤖' },
-            { key: 'audio',     label: 'AUDIO',      emoji: '🎵' },
-            { key: 'download',  label: 'DOWNLOAD',   emoji: '⬇️' },
-            { key: 'ephoto',    label: 'EPHOTO360',  emoji: '🖼️' },
-            { key: 'fun',       label: 'FUN',        emoji: '😂' },
-            { key: 'games',     label: 'GAMES',      emoji: '🎮' },
-            { key: 'group',     label: 'GROUP',      emoji: '👥' },
-            { key: 'image',     label: 'IMAGE',      emoji: '🌄' },
-            { key: 'other',     label: 'OTHER',      emoji: '📦' },
-            { key: 'owner',     label: 'OWNER',      emoji: '👑' },
-            { key: 'religion',  label: 'RELIGION',   emoji: '🕌' },
-            { key: 'search',    label: 'SEARCH',     emoji: '🔍' },
-            { key: 'settings',  label: 'SETTINGS',   emoji: '⚙️' },
-            { key: 'sports',    label: 'SPORTS',     emoji: '⚽' },
-            { key: 'support',   label: 'SUPPORT',    emoji: '🆘' },
-            { key: 'tools',     label: 'TOOLS',      emoji: '🛠️' },
-            { key: 'tostatus',  label: 'TOSTATUS',   emoji: '📤' },
-            { key: 'translate', label: 'TRANSLATE',  emoji: '🌍' },
-            { key: 'video',     label: 'VIDEO',      emoji: '🎬' },
-            { key: 'general',   label: 'OTHERS',     emoji: '✨' },
-            // legacy
-            { key: 'media',     label: 'MEDIA',      emoji: '🎬' },
-            { key: 'utility',   label: 'UTILITY',    emoji: '🔧' },
+            { key: 'ai',           label: 'AI',           emoji: '🤖' },
+            { key: 'audio',        label: 'AUDIO',        emoji: '🎵' },
+            { key: 'download',     label: 'DOWNLOAD',     emoji: '⬇️' },
+            { key: 'ephoto',       label: 'EPHOTO360',    emoji: '🖼️' },
+            { key: 'fun',          label: 'FUN',          emoji: '😂' },
+            { key: 'group',        label: 'GROUP',        emoji: '👥' },
+            { key: 'image',        label: 'IMAGE',        emoji: '🌄' },
+            { key: 'multisession', label: 'MULTISESSION', emoji: '🔗' },
+            { key: 'other',        label: 'OTHER',        emoji: '📦' },
+            { key: 'owner',        label: 'OWNER',        emoji: '👑' },
+            { key: 'reaction',     label: 'REACTION',     emoji: '😍' },
+            { key: 'religion',     label: 'RELIGION',     emoji: '🕌' },
+            { key: 'search',       label: 'SEARCH',       emoji: '🔍' },
+            { key: 'settings',     label: 'SETTINGS',     emoji: '⚙️' },
+            { key: 'sports',       label: 'SPORTS',       emoji: '⚽' },
+            { key: 'support',      label: 'SUPPORT',      emoji: '🆘' },
+            { key: 'tools',        label: 'TOOLS',        emoji: '🛠️' },
+            { key: 'video',        label: 'VIDEO',        emoji: '🎬' },
+            { key: 'tostatus',     label: 'TOSTATUS',     emoji: '📤' },
+            { key: 'translate',    label: 'TRANSLATE',    emoji: '🌍' },
+            { key: 'menustyle',    label: 'MENUSTYLE',    emoji: '🎨' },
+            // extra (loaded but not numbered in primary index)
+            { key: 'games',    label: 'GAMES',    emoji: '🎮' },
+            { key: 'general',  label: 'OTHERS',   emoji: '✨' },
+            { key: 'media',    label: 'MEDIA',    emoji: '🎬' },
+            { key: 'utility',  label: 'UTILITY',  emoji: '🔧' },
         ];
-        this.catOrder = this.catDef.map(c => c.key);
-        this.catLabel = {}; this.catEmoji = {};
-        this.catDef.forEach(c => { this.catLabel[c.key] = c.label; this.catEmoji[c.key] = c.emoji; });
+        this.catDef.forEach(c => this.categories.set(c.key, []));
         this.load();
     }
 
     load() {
         this.plugins.clear();
-        this.categories.clear();
-        this.catOrder.forEach(c => this.categories.set(c, []));
+        this.catDef.forEach(c => this.categories.set(c.key, []));
         if (!fs.existsSync(this.dir)) return;
 
         for (const file of fs.readdirSync(this.dir).filter(f => f.endsWith('.js') && !f.startsWith('_'))) {
             try {
                 const fp = path.join(this.dir, file);
                 delete require.cache[require.resolve(fp)];
-                const list = [].concat(require(fp));
-                for (const p of list) {
+                for (const p of [].concat(require(fp))) {
                     if (!p?.command || typeof p.execute !== 'function') continue;
                     const cat = p.category || 'general';
                     if (!this.categories.has(cat)) this.categories.set(cat, []);
-                    this.plugins.set(p.command, p);
+                    if (!this.plugins.has(p.command)) this.plugins.set(p.command, p);
                     this.categories.get(cat).push(p.command);
                 }
             } catch (e) { console.log(chalk.red(`  [PLUG] ${file}: ${e.message}`)); }
         }
 
+        // ── Plugin load summary ──────────────────────────────────────────
         console.log('');
-        console.log(chalk.hex('#00d4ff').bold('  ┌─ PLUGIN SYSTEM ──────────────────────────────'));
+        console.log(chalk.hex('#00d4ff').bold('  ┌─ 👁️  LIAM EYES — COMMANDS ─────────────────────'));
+        let total = 0;
         for (const c of this.catDef) {
             const n = (this.categories.get(c.key) || []).length;
-            if (n) console.log(chalk.hex('#a29bfe')(`  │  ${c.emoji} ${c.label.padEnd(12)} ${n} commands`));
+            if (n) {
+                console.log(chalk.hex('#a29bfe')(`  │  ${c.emoji} ${c.label.padEnd(14)} `) + chalk.white(String(n)));
+                total += n;
+            }
         }
-        console.log(chalk.hex('#00b894').bold(`  └─ Total: ${this.plugins.size} commands ✔`));
-        console.log('');
+        console.log(chalk.hex('#00b894').bold(`  └─ ✔ ${total} commands loaded\n`));
     }
 
     async run(cmd, sock, m, ctx) {
         const p = this.plugins.get(cmd);
         if (!p) return false;
         try {
-            if (p.owner && !ctx.isCreator)   { await ctx.reply(config.message.owner); return true; }
-            if (p.group && !m.isGroup)        { await ctx.reply(config.message.group); return true; }
+            if (p.owner && !ctx.isCreator)                               { await ctx.reply(config.message.owner); return true; }
+            if (p.group && !m.isGroup)                                   { await ctx.reply(config.message.group); return true; }
             if (p.admin && m.isGroup && !ctx.isAdmins && !ctx.isCreator) { await ctx.reply(config.message.admin); return true; }
             await p.execute(sock, m, ctx);
-        } catch (e) { console.log(chalk.red(`  [CMD] ${cmd}: ${e.message}`)); }
+        } catch (e) { console.log(chalk.red(`  [CMD:${cmd}] ${e.message}`)); }
         return true;
     }
 
-    activeCats() { return this.catDef.filter(c => (this.categories.get(c.key) || []).length > 0); }
-    catByIndex(n) { return this.activeCats()[n - 1] || null; }
-    count() { return this.plugins.size; }
-    reload() { this.load(); }
+    // First 21 catDef entries are primary (numbered in menu)
+    primaryCats() { return this.catDef.slice(0, 21).filter(c => (this.categories.get(c.key) || []).length > 0); }
+    catByNum(n)   { return this.primaryCats()[n - 1] || null; }
+    count()       { return this.plugins.size; }
+    reload()      { this.load(); }
+    getCmds(key)  { return (this.categories.get(key) || []).sort(); }
 
-    // ════════════════════════════════════════════════════════════════════════
-    //  STYLE 1 — Numbered index  (user replies with number → category drops)
-    //  Numbers: bold unicode  𝟏 𝟐 𝟑...
-    //  Labels:  bold serif    𝐀𝐈 𝐌𝐄𝐍𝐔
-    // ════════════════════════════════════════════════════════════════════════
-    _s1_index(prefix) {
-        const cats = this.activeCats();
-        const lines = [];
-        cats.forEach((c, i) => {
-            lines.push(`${boldNum(i + 1)} ${bold(c.label + ' MENU')}`);
-        });
-        return lines.join('\n');
+    // ═══ STYLE 1 — NUMBERED (default) ════════════════════════════════════════
+    //  Index: star-bordered numbered list
+    //  Reply with number → single-column command list (no crowding)
+    style1_index() {
+        const cats = this.primaryCats();
+        return cats.map((c, i) => `_${i+1}._ ${c.emoji} _${c.label}_`).join('\n');
     }
 
-    _s1_category(prefix, catKey) {
-        const cmds = (this.categories.get(catKey) || []).sort();
+    style1_cat(prefix, catKey) {
+        const cmds = this.getCmds(catKey);
         const c    = this.catDef.find(x => x.key === catKey) || { label: catKey.toUpperCase(), emoji: '📦' };
         if (!cmds.length) return null;
-        const lines = [`┏▣ ◈ *${c.emoji} ${c.label} MENU* ◈`];
-        cmds.forEach(cmd => lines.push(`│➽ ${prefix}${cmd}`));
-        lines.push('┗▣');
-        return lines.join('\n');
+        return [
+            BOX_T,
+            `  ${c.emoji} *${c.label} MENU*`,
+            BOX_B,
+            ...cmds.map(cmd => `│ ${prefix}${cmd}`),
+            '└─────────────────────',
+        ].join('\n');
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    //  STYLE 2 — Classic boxed  ╭──『 CAT 』 │ cmd ╰──
-    // ════════════════════════════════════════════════════════════════════════
-    _s2(prefix) {
+    // ═══ STYLE 2 — LIST (all categories with commands) ═══════════════════════
+    style2(prefix) {
         const lines = [];
         for (const c of this.catDef) {
-            const cmds = this.categories.get(c.key);
-            if (!cmds?.length) continue;
-            lines.push(`\n╭──『 *${c.emoji} ${c.label}* 』`);
-            [...cmds].sort().forEach(cmd => lines.push(`│  ✦ ${prefix}${cmd}`));
-            lines.push('╰' + '─'.repeat(30));
+            const cmds = this.getCmds(c.key);
+            if (!cmds.length) continue;
+            lines.push(`\n${c.emoji} *${c.label} MENU*`);
+            lines.push('─────────────────────────');
+            cmds.forEach(cmd => lines.push(`│ ${prefix}${cmd}`));
         }
         return lines.join('\n');
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    //  STYLE 3 — Cursive script fade  𝓐𝓑𝓒 headers, flower bullets
-    // ════════════════════════════════════════════════════════════════════════
-    _s3(prefix) {
-        const bullets = ['✿','❀','✾','❁','✸','✺','✻','✼','❋','✤'];
+    // ═══ STYLE 3 — CLASSIC (box headers — matches sample image) ═══════════════
+    style3(prefix) {
         const lines = [];
+        for (const c of this.catDef) {
+            const cmds = this.getCmds(c.key);
+            if (!cmds.length) continue;
+            lines.push(`\n╭──『 *${c.emoji} ${c.label}* 』`);
+            cmds.forEach(cmd => lines.push(`│  ✦ ${prefix}${cmd}`));
+            lines.push('╰' + '─'.repeat(28));
+        }
+        return lines.join('\n');
+    }
+
+    // ═══ STYLE 4 — CURSIVE (script headers + flower bullets) ═════════════════
+    style4(prefix) {
+        const bullets = ['✿','❀','✾','❁','✸','✺'];
+        const lines   = [];
         let bi = 0;
         for (const c of this.catDef) {
-            const cmds = this.categories.get(c.key);
-            if (!cmds?.length) continue;
-            lines.push(`\n〔 ${c.emoji} *${script(c.label)}* 〕`);
-            [...cmds].sort().forEach(cmd => {
-                lines.push(`  ${bullets[bi % bullets.length]} _${prefix}${cmd}_`);
-                bi++;
-            });
+            const cmds = this.getCmds(c.key);
+            if (!cmds.length) continue;
+            lines.push(`\n≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋`);
+            lines.push(`  ${c.emoji} *${script(c.label)}*`);
+            lines.push(`≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋`);
+            cmds.forEach(cmd => lines.push(`  ${bullets[bi++ % bullets.length]} _${prefix}${cmd}_`));
         }
         return lines.join('\n');
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    //  STYLE 4 — Bold-italic headers, diamond two-column grid
-    // ════════════════════════════════════════════════════════════════════════
-    _s4(prefix) {
-        const lines = [];
-        for (const c of this.catDef) {
-            const cmds = this.categories.get(c.key);
-            if (!cmds?.length) continue;
-            lines.push(`\n◈◈◈ ${c.emoji} *${boldItalic(c.label)}* ◈◈◈`);
-            const sorted = [...cmds].sort();
-            for (let i = 0; i < sorted.length; i += 2) {
-                const a = `⟡ ${prefix}${sorted[i]}`;
-                const b = sorted[i + 1] ? `   ⟡ ${prefix}${sorted[i + 1]}` : '';
-                lines.push(a + b);
-            }
-        }
-        return lines.join('\n');
-    }
-
-    buildMenu(prefix, style, catKey) {
-        if (style === 1) return catKey ? this._s1_category(prefix, catKey) : this._s1_index(prefix);
-        if (style === 2) return this._s2(prefix);
-        if (style === 3) return this._s3(prefix);
-        if (style === 4) return this._s4(prefix);
-        return this._s1_index(prefix);
     }
 }
 
 const PL = new PluginLoader();
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  CHATBOT — bilingual AI with humor (Swahili + English)
+//  CHATBOT — Bilingual AI with humor + vibe detection
 // ─────────────────────────────────────────────────────────────────────────────
-const chatHistory = new Map(); // jid → [{role,content}]
-global._chatHistory = chatHistory; // exposed for .clearchat command
+const chatHistory = new Map();
+global._chatHistory = chatHistory;
 
-const SYSTEM_PROMPT =
-`You are LIAM EYES 👁️, a witty WhatsApp assistant made by Liam.
-Rules:
-- Detect the user's language from their message and REPLY IN THE SAME LANGUAGE.
-  If they write Swahili → respond Swahili. English → English. Mix → mirror that mix.
-- Match their VIBE: chill = chill, excited = hype, curious = informative+fun, sad = empathetic.
-- Add natural humor — a quick joke or witty observation when it fits. Don't force it.
-- Keep casual replies SHORT (1-3 sentences). Be detailed only when genuinely helping.
-- If asked who you are: you're LIAM EYES, a WhatsApp AI assistant — nothing else.
-- Use emojis sparingly and purposefully.
-- Never break character or mention OpenAI, ChatGPT, or Anthropic.`;
+const SYSTEM_PROMPT = `You are LIAM EYES 👁️ — a witty WhatsApp AI by Liam.
+RULES:
+- Reply in SAME LANGUAGE as the user. Swahili→Swahili. English→English.
+- Match their VIBE: chill→relaxed, excited→hype, sad→warm, playful→playful.
+- Natural humor and light sarcasm when they fit. Never forced.
+- SHORT for casual (1-3 sentences). Detailed only when actually helping.
+- NEVER mention OpenAI, ChatGPT, Claude, or Anthropic. You are LIAM EYES by Liam.
+- Use natural Swahili slang for Swahili users (maze, sawa, vipi, niko, bora, pole).`;
 
-const getHistory = jid => {
+const getChatHist = jid => {
     if (!chatHistory.has(jid)) chatHistory.set(jid, []);
     const h = chatHistory.get(jid);
-    if (h.length > 16) chatHistory.set(jid, h.slice(-16));
+    if (h.length > 20) chatHistory.set(jid, h.slice(-20));
     return chatHistory.get(jid);
 };
 
 const chatbotReply = async (jid, userText) => {
-    const history = getHistory(jid);
-    history.push({ role: 'user', content: userText });
-
-    // Build conversational context
-    const context = history.slice(-6).map(h =>
-        (h.role === 'user' ? 'User' : 'LIAM') + ': ' + h.content
-    ).join('\n');
-
-    const fullPrompt = SYSTEM_PROMPT +
-        '\n\n--- Conversation so far ---\n' + context +
-        '\n\nLIAM:';
-
+    const hist = getChatHist(jid);
+    hist.push({ role: 'user', content: userText });
+    const ctx = hist.slice(-8).map(h => (h.role === 'user' ? 'User: ' : 'LIAM: ') + h.content).join('\n');
     let reply = '';
     try {
         const { data } = await axios.get(
-            `https://text.pollinations.ai/${encodeURIComponent(fullPrompt)}`,
-            { timeout: 14000, headers: { 'User-Agent': 'LIAM-EYES/2.0' } }
+            `https://text.pollinations.ai/${encodeURIComponent(SYSTEM_PROMPT + '\n\n--- Chat ---\n' + ctx + '\nLIAM:')}`,
+            { timeout: 15000, headers: { 'User-Agent': 'LIAM-EYES/2.0' } }
         );
         reply = (data?.toString() || '').trim();
     } catch (_) {}
-
-    // Fallback if pollinations fails
     if (!reply || reply.length < 2) {
-        const sw = /habari|niko|sijui|asante|sawa|wewe|mimi|ni|ya|na|wa|kwa|hii|hiyo|lakini|pia|bado/i.test(userText);
-        const fallbacks = sw
-            ? ['😅 Samahani, nilikata kidogo! Niulize tena.', '🤔 Hilo ni gumu! Mtandao wangu ulichoka. Jaribu tena.', '😂 Ah pole, nilikosea! Sema tena bwana.']
-            : ["😅 I glitched a bit! Ask me again.", "🤔 Good one — my brain buffered. Try again!", "😂 Oops, short-circuit! Hit me again."];
-        reply = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+        const sw = /\b(habari|sawa|maze|vipi|bora|pole|karibu|ndio|hapana|niko|rafiki|jambo)\b/i.test(userText);
+        const fb = sw
+            ? ['😅 Samahani, nilikata! Niulize tena.', '🤔 Mtandao wangu ulichoka. Jaribu tena.']
+            : ["😅 Brain buffered! Try again.", "🤔 I glitched — retry!"];
+        reply = fb[~~(Math.random() * fb.length)];
     }
-
-    history.push({ role: 'assistant', content: reply });
+    hist.push({ role: 'assistant', content: reply });
     return reply;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  CONSOLE LOG — CYPHER-X style (Image 3)
+//  ──────────── 『 LIAM EYES 』 ──────────
+//  » Sent Time: Tuesday, 22:18 EAT
+//  » Message Type: imageMessage
+//  » Sender: 254712345678
+//  » Name: Boss Lady
+//  » Chat ID: group@g.us
+//  » Message: hello world
+// ─────────────────────────────────────────────────────────────────────────────
+const LOG_COLORS = ['#00ff88','#00d4ff','#ff6b9d','#ffd93d','#a29bfe','#fd79a8'];
+let _logColorIdx = 0;
+
+const logMsg = (m, body, pushname, senderNum, isGroup, chatId, mtype) => {
+    const color = LOG_COLORS[_logColorIdx++ % LOG_COLORS.length];
+    const tz_   = fmt_tz();
+    const day   = moment().tz(tz()).format('dddd');
+    const time  = moment().tz(tz()).format('HH:mm:ss');
+    const sep   = chalk.hex(color)('─'.repeat(16) + ' 『 ') + chalk.white.bold('LIAM EYES') + chalk.hex(color)(' 』 ' + '─'.repeat(16));
+    const row   = (label, val) => chalk.hex(color)('» ') + chalk.hex('#888')(label.padEnd(14)) + chalk.white(val);
+
+    console.log('');
+    console.log(sep);
+    console.log(row('Sent Time:', `${day}, ${time} ${tz_}`));
+    console.log(row('Message Type:', mtype || 'textMessage'));
+    console.log(row('Sender:', senderNum));
+    console.log(row('Name:', pushname || 'Unknown'));
+    console.log(row('Chat ID:', isGroup ? chatId : 'DM'));
+    console.log(row('Message:', (body || 'N/A').slice(0, 80)));
+    console.log(chalk.hex(color)('─'.repeat(44)));
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -301,41 +309,54 @@ module.exports = async (sock, m, chatUpdate, store) => {
     try {
         await loadUtils();
 
-        const body = (
-            m.mtype === 'conversation'           ? m.message.conversation :
-            m.mtype === 'imageMessage'           ? m.message.imageMessage?.caption :
-            m.mtype === 'videoMessage'           ? m.message.videoMessage?.caption :
-            m.mtype === 'extendedTextMessage'    ? m.message.extendedTextMessage?.text :
-            m.mtype === 'buttonsResponseMessage' ? m.message.buttonsResponseMessage?.selectedButtonId :
-            m.mtype === 'listResponseMessage'    ? m.message.listResponseMessage?.singleSelectReply?.selectedRowId :
+        const mtype = m.mtype || Object.keys(m.message || {})[0] || 'unknown';
+        // Use m.body set by serialize (covers all message types including quoted replies)
+        // Fallback chain ensures we never miss a plain "3" or any text
+        const body  = (
+            m.body ||
+            m.message?.conversation ||
+            m.message?.extendedTextMessage?.text ||
+            m.message?.imageMessage?.caption ||
+            m.message?.videoMessage?.caption ||
+            m.message?.buttonsResponseMessage?.selectedButtonId ||
+            m.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
             ''
-        ) || '';
+        ).toString().trim();
 
         const botId     = (sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
         const sender    = m.key.fromMe ? botId : (m.key.participant || m.key.remoteJid);
         const senderNum = sender.split('@')[0];
+        const pushname  = m.pushName || 'User';
 
         const prefixMatch = body.match(/^[.!#$]/);
-        const prefix  = prefixMatch ? prefixMatch[0] : '.';
+        const prefix  = prefixMatch ? prefixMatch[0] : (config.prefix || '.');
         const isCmd   = !!prefixMatch;
         const command = isCmd ? body.slice(1).trim().split(/\s+/)[0].toLowerCase() : '';
-        const args    = body.trim().split(/\s+/).slice(1);
-        const text = q = args.join(' ');
+        const args    = isCmd ? body.trim().split(/\s+/).slice(1) : [];
+        const text    = args.join(' ');
 
-        const pushname = m.pushName || 'User';
-        const quoted   = m.quoted || m;
-        const mime     = (quoted.msg || quoted).mimetype || '';
-        const isMedia  = /image|video|sticker|audio/.test(mime);
+        const quoted = m.quoted || m;
+        const mime   = (quoted.msg || quoted).mimetype || '';
+        const isMedia = /image|video|sticker|audio/.test(mime);
 
-        const isCreator = _jidNorm(sender) === _jidNorm(botId);
+        const isCreator = (() => {
+            try {
+                const n1 = (sender || '').split('@')[0].replace(/:\d+/, '');
+                const n2 = (config.owner || '').replace(/[^0-9]/g, '');
+                return n1 === n2 || (_jidNorm?.(sender) === _jidNorm?.(botId));
+            } catch { return false; }
+        })();
+        const isSudo = isCreator || (config.sudo || []).map(s => s.replace(/\D/, '')).includes(senderNum);
 
-        let groupMetadata = {}, groupName = '', participants = [], groupAdmins = [],
-            isBotAdmins = false, isAdmins = false, groupOwner = '', isGroupOwner = false;
+        let groupMetadata = {}, groupName = '', participants = [],
+            groupAdmins = [], isBotAdmins = false, isAdmins = false,
+            groupOwner = '', isGroupOwner = false;
+
         if (m.isGroup) {
             groupMetadata = await sock.groupMetadata(m.chat).catch(() => ({}));
             groupName     = groupMetadata.subject || '';
             participants  = (groupMetadata.participants || []).map(p => ({
-                id: p.id, admin: p.admin === 'superadmin' ? 'superadmin' : p.admin === 'admin' ? 'admin' : null,
+                id: p.id, admin: p.admin === 'superadmin' ? 'superadmin' : p.admin === 'admin' ? 'admin' : null
             }));
             groupAdmins  = participants.filter(p => p.admin).map(p => p.id);
             isBotAdmins  = groupAdmins.includes(botId);
@@ -344,86 +365,117 @@ module.exports = async (sock, m, chatUpdate, store) => {
             isGroupOwner = groupOwner === sender;
         }
 
-        if (isCmd) {
-            const ts  = new Date().toLocaleTimeString('en-US', { hour12: false });
-            const loc = m.isGroup ? chalk.hex('#00b894')('[GRP] ') : chalk.hex('#74b9ff')('[DM]  ');
-            console.log(
-                chalk.hex('#636e72')(`  [${ts}] `) + loc +
-                chalk.hex('#6c5ce7').bold(' ▶ ') +
-                chalk.hex('#fdcb6e').bold((prefix + command).padEnd(18)) +
-                chalk.hex('#a29bfe')('👤 ') + chalk.white((pushname || 'User').slice(0, 14).padEnd(15)) +
-                chalk.hex('#636e72')('+' + senderNum)
-            );
-        }
+        // ── Console log every message ────────────────────────────────────────
+        logMsg(m, body, pushname, senderNum, m.isGroup, m.chat, mtype);
 
+        // ── Bot paused? Only owner .wake can unfreeze ────────────────────────
+        if (BOT_PAUSED && !isCreator) return;
+        if (BOT_PAUSED && isCmd && command !== 'wake') return;
+
+        // reply WITH thumbnail (list/classic/cursive styles + commands)
         const reply = txt => sock.sendMessage(m.chat, {
             text: txt,
             contextInfo: { externalAdReply: {
-                title: '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒',
-                body: '👁️ Your Eyes in the WhatsApp World',
-                thumbnailUrl: config.thumbUrl,
-                sourceUrl: 'https://whatsapp.com/channel/0029VbBeZTc1t90aZjks9v2S',
+                title: '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒', body: '👁️ Your Eyes in the WhatsApp World',
+                thumbnailUrl: config.thumbUrl, sourceUrl: config.channel,
                 renderLargerThumbnail: false,
             }}
         }, { quoted: m });
+        // reply WITHOUT thumbnail (numbered menu category responses — clean look)
+        const replyPlain = txt => sock.sendMessage(m.chat, { text: txt }, { quoted: m });
 
         const ctx = {
-            args, text, q, quoted, mime, isMedia,
+            args, text, q: text, quoted, mime, isMedia,
             groupMetadata, groupName, participants, groupOwner,
             groupAdmins, isBotAdmins, isAdmins, isGroupOwner,
-            isCreator, prefix, reply, config, sender, pushname, senderNum, m,
+            isCreator, isSudo, prefix, reply, config, sender, pushname, senderNum, m,
         };
 
-        // ── Auto features ────────────────────────────────────────────────────
+        // ── Auto-features ────────────────────────────────────────────────────
         const feat = config.features || {};
-        if (feat.autoread && !m.key.fromMe)
-            sock.readMessages([m.key]).catch(() => {});
-        if (feat.autotyping && !m.key.fromMe)
-            sock.sendPresenceUpdate('composing', m.chat).catch(() => {});
-        if (feat.autorecording && !m.key.fromMe)
-            sock.sendPresenceUpdate('recording', m.chat).catch(() => {});
-        if (feat.autoreact && !m.key.fromMe) {
-            const pool = ['❤️','😂','🔥','👍','😍','🤩','💯','⚡','🎯','✨'];
+        if (feat.autoread      && !m.key.fromMe) sock.readMessages([m.key]).catch(() => {});
+        if (feat.autotyping    && !m.key.fromMe) sock.sendPresenceUpdate('composing', m.chat).catch(() => {});
+        if (feat.autorecording && !m.key.fromMe) sock.sendPresenceUpdate('recording', m.chat).catch(() => {});
+        if (feat.autoreact     && !m.key.fromMe) {
+            const pool = config.statusReactEmojis || ['❤️','😂','🔥','👍','😍'];
             sock.sendMessage(m.chat, { react: { text: pool[~~(Math.random() * pool.length)], key: m.key } }).catch(() => {});
         }
         if (feat.antilink && m.isGroup && !isAdmins && !isCreator) {
             if (/(https?:\/\/|wa\.me\/|whatsapp\.com\/)/i.test(body)) {
                 sock.sendMessage(m.chat, { delete: m.key }).catch(() => {});
-                reply(`⚠️ @${senderNum} Links are not allowed here!`);
-                return;
+                return reply(`⚠️ @${senderNum} Links are not allowed here!`);
             }
         }
         if (feat.antibadword && m.isGroup && !isAdmins && !isCreator) {
             if ((config.badwords || []).some(w => body.toLowerCase().includes(w.toLowerCase()))) {
                 sock.sendMessage(m.chat, { delete: m.key }).catch(() => {});
-                reply(`⚠️ @${senderNum} Watch your language!`);
-                return;
+                return reply(`⚠️ @${senderNum} Watch your language!`);
+            }
+        }
+        if (feat.grouponly   && !m.isGroup) return;
+        if (feat.privateonly &&  m.isGroup) return;
+
+        // ════════════════════════════════════════════════════════════════════
+        //  NUMERIC REPLY HANDLER
+        //  Works in ANY style — if user sends 1-21, show that category
+        //  In numbered style → replyPlain (no thumbnail image)
+        //  In other styles  → reply (with thumbnail)
+        // ════════════════════════════════════════════════════════════════════
+        if (!m.key.fromMe && !isCmd) {
+            // Strip ALL whitespace characters to handle mobile newlines/spaces
+            const trimmed = (body || '').replace(/\s+/g, '');
+            if (/^\d{1,2}$/.test(trimmed)) {
+                const n = parseInt(trimmed, 10);
+                if (n >= 1 && n <= 21) {
+                    const cat = PL.catByNum(n);
+                    if (cat) {
+                        const st      = parseInt(config.menuStyle) || 1;
+                        const content = PL.style1_cat(prefix, cat.key);
+                        console.log(chalk.hex('#fdcb6e')(`  [MENU] "${trimmed}" → ${cat.label} (style=${st})`));
+                        if (content) {
+                            // No thumbnail in numbered style — clean list only
+                            if (st === 1) { await replyPlain(content); }
+                            else          { await reply(content); }
+                            return;
+                        }
+                    }
+                    // Number in range but no matching cat — swallow silently
+                    return;
+                }
             }
         }
 
-        // ── Chatbot (non-command messages) ───────────────────────────────────
-        if (feat.chatbot && !m.key.fromMe && !isCmd && body.trim()) {
-            try {
-                await sock.sendPresenceUpdate('composing', m.chat).catch(() => {});
-                const botReply = await chatbotReply(m.chat, body.trim());
-                await sock.sendPresenceUpdate('paused', m.chat).catch(() => {});
-                await reply(botReply);
-            } catch (_) {
-                await reply('😅 Hiccup! Try again.');
-            }
+        // ── Auto-reply when anyone mentions "bot" ────────────────────────────
+        if (!m.key.fromMe && !isCmd && /\bbot\b/i.test(body)) {
+            const ph = config.pairingSite || 'https://liam-pannel.onrender.com/pair';
+            const gh = config.github      || 'https://github.com/Dialmw/LIAM-EYES';
+            const ownerNum = config.owner || '254705483052';
+            await sock.sendMessage(m.chat, {
+                text:
+                    `👁️ *LIAM EYES Bot*\n\n` +
+                    `Hey ${pushname}! 👋 Looking for a bot?\n\n` +
+                    `🔗 *Get Session ID:* ${ph}\n` +
+                    `📦 *Source / Download:* ${gh}\n` +
+                    `📞 *Contact owner:* wa.me/${ownerNum}\n\n` +
+                    `_Type *${prefix}menu* after connecting to see all commands_\n\n` +
+                    `> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`,
+                contextInfo: { externalAdReply: {
+                    title: '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 — WhatsApp Bot',
+                    body: '👁️ Your Eyes in the WhatsApp World',
+                    thumbnailUrl: config.thumbUrl, sourceUrl: ph, mediaType: 1,
+                }}
+            }, { quoted: m }).catch(() => {});
             return;
         }
 
-        // ── Style-1: user replies with a number to drill into a category ────
-        if (!isCmd && !m.key.fromMe && /^\s*\d+\s*$/.test(body)) {
-            const style = config.menuStyle || 1;
-            if (style === 1) {
-                const cat = PL.catByIndex(parseInt(body.trim()));
-                if (cat) {
-                    const content = PL.buildMenu(prefix, 1, cat.key);
-                    if (content) { await reply(content); return; }
-                }
-            }
+        // ── Chatbot (non-command, non-numeric) ───────────────────────────────
+        if (feat.chatbot && !m.key.fromMe && !isCmd && body.trim().length > 0) {
+            try {
+                sock.sendPresenceUpdate('composing', m.chat).catch(() => {});
+                const botReply = await chatbotReply(m.chat, body.trim());
+                sock.sendPresenceUpdate('paused', m.chat).catch(() => {});
+                return await reply(botReply);
+            } catch (_) { return await reply('😅 Hiccup! Try again.'); }
         }
 
         if (!isCmd) return;
@@ -431,83 +483,165 @@ module.exports = async (sock, m, chatUpdate, store) => {
         // ── Plugin dispatch ──────────────────────────────────────────────────
         if (await PL.run(command, sock, m, ctx)) return;
 
-        // ── Built-in commands ────────────────────────────────────────────────
-        switch (command) {
+        // ════════════════════════════════════════════════════════════════════
+        //  BUILT-IN: .menu / .help
+        // ════════════════════════════════════════════════════════════════════
+        if (command === 'menu' || command === 'help') {
+            const style  = parseInt(config.menuStyle) || 1;
+            const numArg = parseInt(args[0]);
 
-            case 'menu':
-            case 'help': {
-                const style  = config.menuStyle || 1;
-                const numArg = parseInt(args[0]);
-
-                // .menu 7 → show category 7 directly (style 1 only)
-                if (style === 1 && numArg > 0) {
-                    const cat = PL.catByIndex(numArg);
-                    if (cat) {
-                        const content = PL.buildMenu(prefix, 1, cat.key);
-                        if (content) { await reply(content); break; }
-                    }
+            // .menu 5 or .menu ai → jump directly to category (style 1 only)
+            if (style === 1) {
+                if (numArg >= 1 && numArg <= 21) {
+                    const cat = PL.catByNum(numArg);
+                    if (cat) { const c = PL.style1_cat(prefix, cat.key); if (c) { await reply(c); return; } }
                 }
-
-                const mem   = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
-                const up    = process.uptime();
-                const upStr = `${~~(up / 86400)}d ${~~(up % 86400 / 3600)}h ${~~(up % 3600 / 60)}m`;
-                const ping  = Math.max(0, Date.now() - (m.messageTimestamp || 0) * 1000);
-                const total = PL.count();
-                const slabel = {1: '📋 Numbered', 2: '🗂️ Classic', 3: '🌸 Cursive', 4: '💎 Grid'}[style] || '📋 Numbered';
-                const cats  = PL.activeCats();
-
-                const header =
-`╔══════════════════════════════════════╗
-║   👁️  *𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒*  ✦  Alpha Bot    ║
-╚══════════════════════════════════════╝
-_👁️ Your Eyes in the WhatsApp World_
-
-  ⚡ *Ping*   › ${ping}ms
-  ⏱️ *Uptime* › ${upStr}
-  💾 *RAM*    › ${mem}MB
-  📦 *Cmds*   › ${total}
-  🌍 *Mode*   › ${sock.public ? 'Public' : 'Private'}
-  🎨 *Style*  › ${slabel}
-  🔰 *Prefix* › ${prefix}`;
-
-                let menuBody;
-                if (style === 1) {
-                    // Show numbered index — user replies with number
-                    menuBody = header + '\n\n' + PL.buildMenu(prefix, 1) +
-                        `\n\n_Reply with a number to view commands_\n_Or type *${prefix}menu 5* to open a section_`;
-                } else {
-                    menuBody = header + '\n' + PL.buildMenu(prefix, style) +
-                        `\n\n_Change style: *${prefix}menustyle 1/2/3/4*_`;
+                if (args[0] && isNaN(args[0])) {
+                    const key = args[0].toLowerCase();
+                    if (PL.categories.has(key)) { const c = PL.style1_cat(prefix, key); if (c) { await reply(c); return; } }
                 }
-
-                menuBody += '\n\n> _𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 Alpha — by Liam_';
-
-                const logoPath = path.join(__dirname, 'thumbnail', 'logo.jpg');
-                const imgBuf   = fs.existsSync(logoPath) ? fs.readFileSync(logoPath) : image;
-
-                await sock.sendMessage(m.chat, {
-                    image: imgBuf,
-                    caption: menuBody,
-                    contextInfo: { externalAdReply: {
-                        title: '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 — Menu',
-                        body: '👁️ Your Eyes in the WhatsApp World',
-                        thumbnailUrl: config.thumbUrl,
-                        sourceUrl: config.pairingSite || 'https://liam-pannel.onrender.com/pair',
-                        mediaType: 1,
-                    }}
-                }, { quoted: m });
-                break;
             }
 
-            case 'reload': {
-                if (!isCreator) { await reply(config.message.owner); break; }
-                PL.reload();
-                reply(`✅ *Reloaded* — ${PL.count()} commands active\n\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`);
-                break;
+            // ── Build header ─────────────────────────────────────────────────
+            const mem    = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(0) + 'MB';
+            const ramTot = (os.totalmem() / 1024 / 1024 / 1024).toFixed(0) + 'GB';
+            const up     = process.uptime();
+            const upStr  = `${~~(up/86400)}d ${~~(up%86400/3600)}h ${~~(up%3600/60)}m`;
+            const ping   = Math.max(0, Date.now() - (m.messageTimestamp || 0) * 1000);
+            const total  = PL.count();
+            const cats   = PL.primaryCats();
+            const utype  = isCreator ? 'Owner' : isSudo ? 'Sudo/Admin' : isAdmins ? 'Admin' : 'User';
+            const botName = config.settings?.title || '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒';
+            const styleIcons = { 1:'🔢 Numbered', 2:'📋 List', 3:'🗂️ Classic', 4:'✒️ Cursive' };
+
+            const styleIcons_ = { 1:'🔢 Numbered', 2:'📋 List', 3:'🗂️ Classic', 4:'✒️ Cursive' };
+            const curStyle   = parseInt(config.menuStyle) || 1;
+            const curStyleNm = styleIcons_[curStyle] || 'Numbered';
+
+            // Classic header (sample image format)
+            const classicHdr =
+                `╔${'═'.repeat(36)}╗\n` +
+                `║   👁️  *${botName}*  ✦  Alpha Bot   ║\n` +
+                `╚${'═'.repeat(36)}╝\n` +
+                `_👁️ Your Eyes in the WhatsApp World_\n\n` +
+                `  ⚡ *Ping*   › ${ping}ms\n` +
+                `  ⏱️ *Uptime* › ${upStr}\n` +
+                `  💾 *RAM*    › ${mem}\n` +
+                `  📦 *Cmds*   › ${total}\n` +
+                `  🌍 *Mode*   › ${sock.public ? 'Public' : 'Private'}\n` +
+                `  🎨 *Style*  › ${curStyleNm}\n` +
+                `  🔰 *Prefix* › ${prefix}\n`;
+
+            // Star box header for other styles
+            const header = sBox(`          *${botName}*`) + '\n\n' +
+                sBox(
+                    `➤ *ᴏᴡɴᴇʀ*     : ${config.settings?.author || 'Liam'}`,
+                    `➤ *ᴘʀᴇғɪx*    : [ ${prefix} ]`,
+                    `➤ *ʜᴏsᴛ*      : Panel`,
+                    `➤ *ᴍᴏᴅᴇ*      : ${sock.public ? 'Public' : 'Private'}`,
+                    `➤ *ᴠᴇʀsɪᴏɴ*   : ${config.settings?.version || 'Alpha'}`,
+                    `➤ *ᴜᴘᴛɪᴍᴇ*    : ${upStr}`,
+                    `➤ *ᴘɪɴɢ*      : ${ping}ms`,
+                    `➤ *ᴄᴏᴍᴍᴀɴᴅs*  : ${total}`,
+                    `➤ *ᴜsᴇʀ ᴛʏᴘᴇ* : ${utype}`,
+                    `➤ *ʀᴀᴍ*       : ${mem} / ${ramTot}`,
+                ) + '\n\n' + sBox(`📂 *AVAILABLE CATEGORIES*`) + '\n\n';
+
+            const styleHint = `\n\n_Change style: *.numbered* | *.list* | *.classic* | *.cursive*_`;
+
+            // ── STYLE 1 — numbered, NO thumbnail image in menu ───────────────
+            if (style === 1) {
+                const compactHdr =
+                    `╔${'═'.repeat(28)}╗\n` +
+                    `║  👁️ _${botName}_  ║\n` +
+                    `╚${'═'.repeat(28)}╝\n` +
+                    `_⚡ ${ping}ms  ⏱️ ${upStr}  💾 ${mem}  📦 ${total} cmds_\n\n`;
+                const txt = compactHdr + PL.style1_index() +
+                    `\n\n_Reply 1–${cats.length} to open · ${prefix}menu 5 to jump_`;
+                await replyPlain(txt);  // no image for numbered style
+                return;
+            }
+
+            // ── STYLE 2 — all commands, list format ──────────────────────────
+            if (style === 2) {
+                await reply(header + PL.style2(prefix) + styleHint);
+                return;
+            }
+
+            // ── STYLE 3 — classic box (matches sample image) ─────────────────
+            if (style === 3) {
+                await reply(classicHdr + PL.style3(prefix) + styleHint);
+                return;
+            }
+
+            // ── STYLE 4 — cursive flower ─────────────────────────────────────
+            if (style === 4) {
+                await reply(header + PL.style4(prefix) + styleHint);
+                return;
             }
         }
 
-    } catch (e) { console.log(chalk.red('[MSG] ' + (e.message || e))); }
+        // ── .kill / .wake (built-in, owner only) ────────────────────────────
+        if (command === 'kill') {
+            if (!isCreator) { return reply(config.message.owner); }
+            BOT_PAUSED = true;
+            return reply(`🔴 *Bot Paused*\n\nI'm no longer responding to anyone.\nUse *${prefix}wake* to resume.\n\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`);
+        }
+        if (command === 'wake') {
+            if (!isCreator) { return reply(config.message.owner); }
+            BOT_PAUSED = false;
+            return reply(`🟢 *Bot Active*\n\nI'm back online!\n\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`);
+        }
+
+        // ── Menu style — .numbered .list .classic .cursive .menustyle ──────
+        const _sW = { numbered:1, list:2, classic:3, cursive:4 };
+        const _sI = { 1:'🔢 Numbered', 2:'📋 List', 3:'🗂️ Classic', 4:'✒️ Cursive' };
+        const _sAll = ['menustyle','setmenustyle','numbered','list','classic','cursive'];
+
+        if (_sAll.includes(command)) {
+            if (!isCreator && !isSudo) return reply(config.message.owner);
+
+            // Word shortcut: .numbered / .list / .classic / .cursive
+            if (_sW[command] !== undefined) {
+                config.menuStyle = _sW[command];
+                return reply(
+                    `✅ *Menu style → ${_sI[_sW[command]]}*\n\n` +
+                    `Type *${prefix}menu* to see it.\n\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`
+                );
+            }
+
+            // .menustyle / .setmenustyle — show or set
+            const curSt = parseInt(config.menuStyle) || 1;
+            const argN  = parseInt(args[0]) || _sW[(args[0]||'').toLowerCase()];
+            if (argN >= 1 && argN <= 4) {
+                config.menuStyle = argN;
+                return reply(
+                    `✅ *Menu style → ${_sI[argN]}*\n\n` +
+                    `Type *${prefix}menu* to see it.\n\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`
+                );
+            }
+
+            return reply(
+                `🎨 *Menu Style*\n\n` +
+                `*Current:* Style ${curSt} — ${_sI[curSt]}\n\n` +
+                `*Styles:*\n` +
+                `│ *1* — Numbered _(reply with number)_\n` +
+                `│ *2* — List _(all commands visible)_\n` +
+                `│ *3* — Classic _(box headers)_\n` +
+                `│ *4* — Cursive _(flower/script)_\n\n` +
+                `*Usage:*\n` +
+                `  *.numbered*   *.list*   *.classic*   *.cursive*\n\n` +
+                `> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`
+            );
+        }
+        // ── .reload ──────────────────────────────────────────────────────────
+        if (command === 'reload') {
+            if (!isCreator) return reply(config.message.owner);
+            PL.reload();
+            return reply(`✅ *Reloaded* — ${PL.count()} commands\n\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`);
+        }
+
+    } catch (e) { console.log(chalk.red('[MSG ERR] ' + (e.message || e))); }
 };
 
 let _f = require.resolve(__filename);
