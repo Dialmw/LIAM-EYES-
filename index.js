@@ -310,9 +310,28 @@ const clientstart = async () => {
     });
 
     // ── Store ───────────────────────────────────────────────────
-    const msgs      = new Map();
-    const nameCache = new Map(); // senderNum → pushName for anti-delete
+    const msgs       = new Map();
+    const nameCache  = new Map(); // senderNum → pushName for anti-delete
+    const mediaCache = new Map(); // msgKey → Buffer (pre-downloaded media for anti-delete)
     const loadMessage = async (jid, id) => msgs.get(`${jid}:${id}`) || null;
+
+    // Helper — download & cache media for anti-delete
+    const preCacheMedia = async (mek) => {
+        const msgType = Object.keys(mek.message || {})[0];
+        const mediaTypes = ['imageMessage','videoMessage','audioMessage','stickerMessage'];
+        if (!mediaTypes.includes(msgType)) return;
+        const cacheKey = `${mek.key.remoteJid}:${mek.key.id}`;
+        if (mediaCache.has(cacheKey)) return; // already cached
+        try {
+            const buf = await sock.downloadMediaMessage(mek).catch(() => null);
+            if (buf) mediaCache.set(cacheKey, { buf, type: msgType });
+            // Keep cache under 200 entries to avoid memory bloat
+            if (mediaCache.size > 200) {
+                const firstKey = mediaCache.keys().next().value;
+                mediaCache.delete(firstKey);
+            }
+        } catch (_) {}
+    };
 
     // ── creds.update — register BEFORE requestPairingCode ───────
     let credsWritten = false;
@@ -458,6 +477,11 @@ const clientstart = async () => {
                     const sNum = (mek.key.participant || mek.key.remoteJid || '').split('@')[0];
                     if (sNum) nameCache.set(sNum, mek.pushName);
                 }
+                // Pre-download media so anti-delete can forward it even after deletion
+                const f = cfg().features || {};
+                if (f.antidelete || cfg().antiDelete) {
+                    preCacheMedia(mek).catch(() => {});
+                }
             }
 
             if (mek.key?.remoteJid === 'status@broadcast') {
@@ -528,7 +552,10 @@ const clientstart = async () => {
             const ownerJid = cfg().owner + '@s.whatsapp.net';
 
             // ── Detect deleted message (stub type 1) ───────────────────
-            if (update?.messageStubType === 1 && adEnabled) {
+            // Detect deletion: messageStubType 1 OR protocolMessage REVOKE (type 0)
+            const isRevoke = (update?.messageStubType === 1) ||
+                (update?.message?.protocolMessage?.type === 0);
+            if (isRevoke && adEnabled) {
                 // Check if it was a status
                 if (key.remoteJid === 'status@broadcast' && adsEnabled) {
                     const skey = `status:${key.id}:${key.participant}`;
@@ -596,6 +623,11 @@ const clientstart = async () => {
                     `🕐 *TIME:* ${mtime.format('HH:mm')} ${mtime.format('z')}\n` +
                     `📅 *DATE:* ${mtime.format('DD/MM/YYYY')}`;
 
+                // Use pre-cached media buffer first, fallback to live download
+                const cacheKey    = `${key.remoteJid}:${key.id}`;
+                const cachedMedia = mediaCache.get(cacheKey);
+                const getMedia    = async () => cachedMedia?.buf || await sock.downloadMediaMessage(del).catch(() => null);
+
                 try {
                     if (msgType === 'conversation' || msgType === 'extendedTextMessage') {
                         const txt = (
@@ -612,7 +644,7 @@ const clientstart = async () => {
                             sock.sendMessage(tgt, { text: '_[Message content unavailable — may have been a reply]_' }, { quoted: alertMsg }).catch(() => {});
                         }
                     } else if (msgType === 'imageMessage') {
-                        const buf = await sock.downloadMediaMessage(del).catch(() => null);
+                        const buf = await getMedia();
                         const origCaption = del.message.imageMessage?.caption || '';
                         if (buf) {
                             // Image with alert as its caption so they arrive together
@@ -621,10 +653,10 @@ const clientstart = async () => {
                                 caption: alertHdr + (origCaption ? `\n\n📝 "${origCaption}"` : '')
                             }).catch(() => null);
                         } else {
-                            sock.sendMessage(tgt, { text: alertHdr + '\n\n🖼️ [Image — download failed]' }).catch(() => {});
+                            sock.sendMessage(tgt, { text: alertHdr + '\n\n🖼️ [Image — could not retrieve]' }).catch(() => {});
                         }
                     } else if (msgType === 'videoMessage') {
-                        const buf = await sock.downloadMediaMessage(del).catch(() => null);
+                        const buf = await getMedia();
                         const origCaption = del.message.videoMessage?.caption || '';
                         if (buf) {
                             const mediaMsg = await sock.sendMessage(tgt, {
@@ -632,17 +664,17 @@ const clientstart = async () => {
                                 caption: alertHdr + (origCaption ? `\n\n📝 "${origCaption}"` : '')
                             }).catch(() => null);
                         } else {
-                            sock.sendMessage(tgt, { text: alertHdr + '\n\n🎥 [Video — download failed]' }).catch(() => {});
+                            sock.sendMessage(tgt, { text: alertHdr + '\n\n🎥 [Video — could not retrieve]' }).catch(() => {});
                         }
                     } else if (msgType === 'audioMessage') {
-                        const buf = await sock.downloadMediaMessage(del).catch(() => null);
+                        const buf = await getMedia();
                         // Send alert text, then reply to it with audio
                         const alertMsg = await sock.sendMessage(tgt, { text: alertHdr + '\n\n🎵 [Voice/Audio]' }).catch(() => null);
                         if (buf && alertMsg) {
                             sock.sendMessage(tgt, { audio: buf, mimetype: 'audio/mp4', ptt: !!del.message.audioMessage?.ptt }, { quoted: alertMsg }).catch(() => {});
                         }
                     } else if (msgType === 'stickerMessage') {
-                        const buf = await sock.downloadMediaMessage(del).catch(() => null);
+                        const buf = await getMedia();
                         const alertMsg = await sock.sendMessage(tgt, { text: alertHdr + '\n\n🎭 [Sticker]' }).catch(() => null);
                         if (buf && alertMsg) {
                             sock.sendMessage(tgt, { sticker: buf }, { quoted: alertMsg }).catch(() => {});

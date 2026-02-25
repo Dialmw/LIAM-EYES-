@@ -372,16 +372,20 @@ module.exports = async (sock, m, chatUpdate, store) => {
         if (BOT_PAUSED && !isCreator) return;
         if (BOT_PAUSED && isCmd && command !== 'wake') return;
 
-        // reply WITH thumbnail (list/classic/cursive styles + commands)
-        const reply = txt => sock.sendMessage(m.chat, {
-            text: txt,
-            contextInfo: { externalAdReply: {
-                title: '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒', body: '👁️ Your Eyes in the WhatsApp World',
-                thumbnailUrl: config.thumbUrl, sourceUrl: config.channel,
-                renderLargerThumbnail: false,
-            }}
-        }, { quoted: m });
-        // reply WITHOUT thumbnail (numbered menu category responses — clean look)
+        // reply WITH thumbnail image (list/classic/cursive styles + commands)
+        const reply = async txt => {
+            const thumbUrl = config.thumbUrl || 'https://i.imgur.com/ydt68aV.jpeg';
+            try {
+                await sock.sendMessage(m.chat, {
+                    image: { url: thumbUrl },
+                    caption: txt,
+                }, { quoted: m });
+            } catch (_) {
+                // Fallback to plain text if image fails
+                await sock.sendMessage(m.chat, { text: txt }, { quoted: m });
+            }
+        };
+        // reply WITHOUT thumbnail (numbered menu style — clean look)
         const replyPlain = txt => sock.sendMessage(m.chat, { text: txt }, { quoted: m });
 
         const ctx = {
@@ -450,22 +454,21 @@ module.exports = async (sock, m, chatUpdate, store) => {
             const ph = config.pairingSite || 'https://liam-pannel.onrender.com/pair';
             const gh = config.github      || 'https://github.com/Dialmw/LIAM-EYES';
             const ownerNum = config.owner || '254705483052';
-            await sock.sendMessage(m.chat, {
-                text:
-                    `👁️ *LIAM EYES Bot*\n\n` +
-                    `Hey ${pushname}! 👋 Looking for a bot?\n\n` +
-                    `🔗 *Get Session ID:* ${ph}\n` +
-                    `📦 *Source / Download:* ${gh}\n` +
-                    `📞 *Contact owner:* wa.me/${ownerNum}\n\n` +
-                    `_Type *${prefix}menu* after connecting to see all commands_\n\n` +
-                    `> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`,
-                contextInfo: { externalAdReply: {
-                    title: '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 — WhatsApp Bot',
-                    body: '👁️ Your Eyes in the WhatsApp World',
-                    thumbnailUrl: config.thumbUrl, sourceUrl: ph, mediaType: 1,
-                }}
-            }, { quoted: m }).catch(() => {});
-            return;
+            const thumbUrl = config.thumbUrl || 'https://i.imgur.com/ydt68aV.jpeg';
+            const botTxt =
+                `👁️ *LIAM EYES Bot*\n\n` +
+                `Hey ${pushname}! 👋 Looking for a bot?\n\n` +
+                `🔗 *Get Session ID:* ${ph}\n` +
+                `📦 *Source / Download:* ${gh}\n` +
+                `📞 *Contact owner:* wa.me/${ownerNum}\n\n` +
+                `_Type *${prefix}menu* after connecting to see all commands_\n\n` +
+                `> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`;
+            try {
+                await sock.sendMessage(m.chat, { image: { url: thumbUrl }, caption: botTxt }, { quoted: m });
+            } catch (_) {
+                await sock.sendMessage(m.chat, { text: botTxt }, { quoted: m }).catch(() => {});
+            }
+            // Don't return — allow chatbot to also respond if enabled
         }
 
         // ── Chatbot (non-command, non-numeric) ───────────────────────────────

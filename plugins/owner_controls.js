@@ -14,7 +14,7 @@ const path   = require('path');
 const os     = require('os');
 const { exec } = require('child_process');
 const config = require('../settings/config');
-const { encrypt } = require('../library/cipher');
+const { encrypt } = require('../library/liam');
 
 const sig     = () => '> 👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒';
 const react   = (s,m,e) => s.sendMessage(m.chat,{react:{text:e,key:m.key}}).catch(()=>{});
