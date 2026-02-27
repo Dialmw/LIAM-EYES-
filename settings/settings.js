@@ -10,9 +10,9 @@ const { getOwner } = require('./auth_ref');
 const settings = {
 
     // ── 🔑 SESSION ────────────────────────────────────────────────────────────
-    // Paste your Session ID here (from https://liam-pannel.onrender.com/pair)
-    // Format:  LIAM~<your_base64_session>
-    sessionId: "LIAM~paste_your_session_id_here",
+    // Paste your Session ID here (from https://liam-eyes-pair.onrender.com/pair)
+    // Format:  LIAM:~<your_base64_session>
+    sessionId: "LIAM:~paste_your_session_id_here",
 
     // ── 👑 ADMIN / OWNER ──────────────────────────────────────────────────────
     // Set via auth module — see library/auth.js
@@ -73,7 +73,7 @@ const settings = {
     thumbUrl:    "https://i.imgur.com/ydt68aV.jpeg",
     tagline:     "👁️ Your Eyes in the WhatsApp World",
     channel:     "https://whatsapp.com/channel/0029VbBeZTc1t90aZjks9v2S",
-    pairingSite: "https://liam-pannel.onrender.com/pair",
+    pairingSite: "https://liam-eyes-pair.onrender.com/pair",
     github:      "https://github.com/Dialmw/LIAM-EYES",
 
     // ── 🎨 MENU STYLE ─────────────────────────────────────────────────────────

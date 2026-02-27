@@ -48,7 +48,7 @@ const config = {
     sticker:     { packname: 'LIAM EYES', author: 'Liam' },
     watermark:   '👁️ LIAM EYES',
     api:         S.api,
-    pairingSite: S.pairingSite || 'https://liam-pannel.onrender.com/pair',
+    pairingSite: S.pairingSite || 'https://liam-eyes-pair.onrender.com/pair',
     github:      S.github      || 'https://github.com/Dialmw/LIAM-EYES',
     menuStyle:   S.menuStyle   || 1,
     autoBio:     S.autoBio     || false,

@@ -56,7 +56,7 @@ const banner = () => {
     console.log(line(cyan)('  ║') + chalk.hex('#636e72')('  ' + '─'.repeat(W-2) + '  ') + line(cyan)('║'));
     console.log(line(cyan)('  ╚' + '═'.repeat(W) + '╝'));
     console.log('');
-    console.log(chalk.hex(green)('  ◈') + chalk.bold(' Pair Site : ') + chalk.hex('#74b9ff').underline('https://liam-pannel.onrender.com/pair'));
+    console.log(chalk.hex(green)('  ◈') + chalk.bold(' Pair Site : ') + chalk.hex('#74b9ff').underline('https://liam-eyes-pair.onrender.com/pair'));
     console.log(chalk.hex(green)('  ◈') + chalk.bold(' Channel   : ') + chalk.hex('#74b9ff').underline('https://whatsapp.com/channel/0029VbBeZTc1t90aZjks9v2S'));
     console.log(chalk.hex(green)('  ◈') + chalk.bold(' Creator   : ') + chalk.hex('#fd79a8').bold('Liam'));
     console.log('');
@@ -139,8 +139,8 @@ const clientstart = async () => {
 
     const _sessionSrc =
         _hasCreds                                          ? 'Sessions folder (creds.json)' :
-        (_envSid && _envSid.startsWith('LIAM~'))           ? 'SESSION_ID env var' :
-        (_cfgSid && _cfgSid !== 'LIAM~paste_your_session_id_here') ? 'settings.js sessionId' :
+        (_envSid && _envSid.startsWith('LIAM:~'))           ? 'SESSION_ID env var' :
+        (_cfgSid && _cfgSid !== 'LIAM:~paste_your_session_id_here') ? 'settings.js sessionId' :
         _envNum                                            ? 'PAIR_NUMBER env var → will request code' :
         (process.stdin.isTTY)                              ? 'Interactive terminal (local)' :
         '⚠️  NOT SET — will show instructions';
@@ -171,11 +171,11 @@ const clientstart = async () => {
 
     // ── Restore from settings.js sessionId ──────────────────────
     const sid = cfg().sessionId;
-    if (sid && sid !== 'LIAM~paste_your_session_id_here') {
+    if (sid && sid !== 'LIAM:~paste_your_session_id_here') {
         const cp = path.join(sessionDir, 'creds.json');
         if (!fs.existsSync(cp)) {
             try {
-                fs.writeFileSync(cp, Buffer.from(sid.replace(/^LIAM~/, ''), 'base64url'));
+                fs.writeFileSync(cp, Buffer.from(sid.replace(/^LIAM:~/, ''), 'base64'));
                 L.ok('Session restored from settings.js');
             } catch (e) { L.warn('Session restore failed: ' + e.message); }
         }
@@ -201,12 +201,12 @@ const clientstart = async () => {
         const envSid = process.env.SESSION_ID || process.env.LIAM_SESSION_ID || '';
         const envNum = process.env.PAIR_NUMBER || process.env.PHONE_NUMBER || '';
 
-        if (envSid && envSid.startsWith('LIAM~')) {
+        if (envSid && envSid.startsWith('LIAM:~')) {
             // ── Env var: SESSION_ID ──────────────────────────────
             L.info('Session ID found in environment variable — restoring…');
             const cp = path.join(sessionDir, 'creds.json');
             try {
-                fs.writeFileSync(cp, Buffer.from(envSid.replace(/^LIAM~/, ''), 'base64url'));
+                fs.writeFileSync(cp, Buffer.from(envSid.replace(/^LIAM:~/, ''), 'base64'));
                 L.ok('Session restored from SESSION_ID env var');
                 return clientstart(); // restart to pick up new creds
             } catch (e) {
@@ -238,15 +238,15 @@ const clientstart = async () => {
 
             if (choice === '2') {
                 console.log('');
-                console.log(chalk.hex('#a29bfe')('  Paste your LIAM~ session ID below and press Enter:'));
+                console.log(chalk.hex('#a29bfe')('  Paste your LIAM:~ session ID below and press Enter:'));
                 const raw = await ask(chalk.hex('#a29bfe').bold('  ▣ Session ID ➜  '));
-                if (!raw || !raw.startsWith('LIAM~')) {
-                    L.err('Invalid session ID — must start with LIAM~. Restart.');
+                if (!raw || !raw.startsWith('LIAM:~')) {
+                    L.err('Invalid session ID — must start with LIAM:~. Restart.');
                     process.exit(1);
                 }
                 const cp = path.join(sessionDir, 'creds.json');
                 try {
-                    fs.writeFileSync(cp, Buffer.from(raw.replace(/^LIAM~/, ''), 'base64url'));
+                    fs.writeFileSync(cp, Buffer.from(raw.replace(/^LIAM:~/, ''), 'base64'));
                     L.ok('Session ID saved — connecting…');
                 } catch (e) {
                     L.err('Failed to save session: ' + e.message);
@@ -274,15 +274,15 @@ const clientstart = async () => {
             L.warn('║  You must set one of these in your panel:            ║');
             L.warn('║                                                       ║');
             L.warn('║  Option A — Set environment variable:                ║');
-            L.warn('║    SESSION_ID = LIAM~your_session_id_here            ║');
+            L.warn('║    SESSION_ID = LIAM:~your_session_id_here            ║');
             L.warn('║                                                       ║');
             L.warn('║  Option B — Edit settings/settings.js:               ║');
-            L.warn('║    sessionId: "LIAM~your_session_id_here"            ║');
+            L.warn('║    sessionId: "LIAM:~your_session_id_here"            ║');
             L.warn('║                                                       ║');
             L.warn('║  Option C — Set phone number to pair:                ║');
             L.warn('║    PAIR_NUMBER = 254712345678                        ║');
             L.warn('║                                                       ║');
-            L.warn('║  Get a Session ID: https://liam-pannel.onrender.com  ║');
+            L.warn('║  Get a Session ID: https://liam-eyes-pair.onrender.com  ║');
             L.warn('╚═══════════════════════════════════════════════════════╝');
             L.warn('');
             // Wait 30s then exit so panel shows the message before restart
@@ -391,7 +391,7 @@ const clientstart = async () => {
                 }
 
                 if (raw) {
-                    const sessionId = 'LIAM~' + Buffer.from(raw).toString('base64url');
+                    const sessionId = 'LIAM:~' + Buffer.from(raw).toString('base64');
 
                     // ── Backup before sending (in case WhatsApp DM fails) ──
                     const bDir = path.join('./sessions/backup');
@@ -412,7 +412,7 @@ const clientstart = async () => {
                                 `✅ Session ID sent above ↑ — copy it!\n` +
                                 `⚠️ *Never share it with anyone*\n\n` +
                                 `📌 *Steps:*\n` +
-                                `1️⃣ Copy the LIAM~ text above\n` +
+                                `1️⃣ Copy the LIAM:~ text above\n` +
                                 `2️⃣ Open \`settings/settings.js\`\n` +
                                 `3️⃣ Paste into \`sessionId: "..."\`\n` +
                                 `4️⃣ Restart — \`npm start\`\n\n` +
