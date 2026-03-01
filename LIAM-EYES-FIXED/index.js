@@ -110,10 +110,10 @@ const L = {
         console.log('');
     },
     boot: async (steps) => {
-        console.log(chalk.hex(_cxGreen).bold('[LIAM-EYES] Booting LIAM EYES...'));
+        console.log(chalk.hex('#00ff88').bold('[LIAM-EYES] Booting LIAM EYES...'));
         for (const [label, delay_ms] of steps) {
             await sleep(delay_ms);
-            console.log(chalk.hex(_cxGreen).bold('[LIAM-EYES]') + chalk.white(' ✔ ' + label));
+            console.log(chalk.hex('#00ff88').bold('[LIAM-EYES]') + chalk.white(' ✔ ' + label));
         }
         console.log('');
     },
@@ -176,7 +176,7 @@ const clientstart = async () => {
         if (!fs.existsSync(cp)) {
             try {
                 fs.writeFileSync(cp, Buffer.from(sid.replace(/^LIAM:~/, ''), 'base64'));
-                console.log(chalk.hex(_cxGreen).bold('[LIAM-EYES]') + chalk.white(' Session saved from Base64'));
+                console.log(chalk.hex('#00ff88').bold('[LIAM-EYES]') + chalk.white(' Session saved from Base64'));
             } catch (e) { L.warn('Session restore failed: ' + e.message); }
         }
     }
@@ -184,110 +184,149 @@ const clientstart = async () => {
     const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
     const { version }          = await fetchLatestBaileysVersion();
 
-    // ── SESSION MENU — shown only if NOT already registered ─────
-    let pairNum    = null;
-    let sessionStr = null;
+    // ── SESSION SETUP — shown only if NOT already registered ────
+    let pairNum = null;
 
     if (!state.creds.registered) {
         // ═══════════════════════════════════════════════════════════════════
-        //  PANEL-SAFE SESSION STARTUP
-        //  Priority order:
-        //  1. SESSION_ID env var  (set in panel environment variables)
-        //  2. PAIR_NUMBER env var (set in panel → auto-request pairing code)
-        //  3. settings.js sessionId (already restored above if present)
-        //  4. Interactive terminal prompt (local dev only, non-panel)
+        //  STARTUP PRIORITY ORDER:
+        //  1. SESSION_ID  env var  → restore creds from base64
+        //  2. PAIR_NUMBER env var  → auto request pairing code (panel use)
+        //  3. settings.js sessionId already decoded above → already handled
+        //  4. LIAM_NUMBER env var  → same as PAIR_NUMBER (alias)
+        //  5. Interactive console  → show 2-option menu (local / panel)
         // ═══════════════════════════════════════════════════════════════════
 
-        const envSid = process.env.SESSION_ID || process.env.LIAM_SESSION_ID || '';
-        const envNum = process.env.PAIR_NUMBER || process.env.PHONE_NUMBER || '';
+        const envSid = (process.env.SESSION_ID || process.env.LIAM_SESSION_ID || '').trim();
+        const envNum = (process.env.PAIR_NUMBER || process.env.PHONE_NUMBER || process.env.LIAM_NUMBER || '').trim();
 
         if (envSid && envSid.startsWith('LIAM:~')) {
-            // ── Env var: SESSION_ID ──────────────────────────────
-            L.info('Session ID found in environment variable — restoring…');
+            // ── Option A: SESSION_ID env var ─────────────────────
+            console.log(chalk.hex('#00ff88').bold('[LIAM-EYES]') + chalk.white(' Restoring session... Please wait...'));
             const cp = path.join(sessionDir, 'creds.json');
             try {
                 fs.writeFileSync(cp, Buffer.from(envSid.replace(/^LIAM:~/, ''), 'base64'));
-                console.log(chalk.hex(_cxGreen).bold('[LIAM-EYES]') + chalk.white(' Session saved from Base64'));
-                return clientstart(); // restart to pick up new creds
+                console.log(chalk.hex('#00ff88').bold('[LIAM-EYES]') + chalk.white(' Session saved  from Base64'));
+                return clientstart();
             } catch (e) {
-                L.err('Failed to restore session from env: ' + e.message);
+                L.err('Failed to restore session: ' + e.message);
                 process.exit(1);
             }
 
         } else if (envNum) {
-            // ── Env var: PAIR_NUMBER ─────────────────────────────
+            // ── Option B: PAIR_NUMBER env var ────────────────────
             pairNum = envNum.replace(/\D/g, '');
             if (!pairNum || pairNum.length < 7) {
-                L.err('PAIR_NUMBER env var is invalid. Set a valid number with country code.');
+                L.err('PAIR_NUMBER is invalid — use full number with country code e.g. 254712345678');
                 process.exit(1);
             }
-            L.info('Pairing number from env var: +' + pairNum);
+            console.log(chalk.hex('#00ff88').bold('[LIAM-EYES]') + chalk.white(' Connecting...'));
 
-        } else if (process.stdin.isTTY) {
-            // ── Interactive terminal (local dev) ─────────────────
+        } else {
+            // ── Option C: Interactive 2-option menu ──────────────
+            // Works on panel (env var input) AND local terminal (stdin).
+            // Shows the choice box, then waits for LIAM_CHOICE env var OR
+            // stdin input (whichever comes first within 90 seconds).
             console.log('');
-            console.log(chalk.hex('#00d4ff').bold('  ┌─────────────────────────────────────────────────────┐'));
-            console.log(chalk.hex('#00d4ff').bold('  │') + chalk.bgHex('#00d4ff').black.bold('   🔐  SESSION SETUP — Choose an option              ') + chalk.hex('#00d4ff').bold(' │'));
-            console.log(chalk.hex('#00d4ff').bold('  ├─────────────────────────────────────────────────────┤'));
-            console.log(chalk.hex('#00d4ff').bold('  │') + chalk.hex('#74b9ff')('  ▣  1  › Enter phone number (get pairing code)      ') + chalk.hex('#00d4ff').bold(' │'));
-            console.log(chalk.hex('#00d4ff').bold('  │') + chalk.hex('#a29bfe')('  ▣  2  › Paste Session ID  (skip pairing)           ') + chalk.hex('#00d4ff').bold(' │'));
-            console.log(chalk.hex('#00d4ff').bold('  └─────────────────────────────────────────────────────┘'));
+            console.log(chalk.hex('#00d4ff').bold('  ╔══════════════════════════════════════════════════════╗'));
+            console.log(chalk.hex('#00d4ff').bold('  ║') + chalk.bgHex('#00d4ff').black.bold(' 🔐  LIAM EYES — SESSION SETUP                        ') + chalk.hex('#00d4ff').bold('║'));
+            console.log(chalk.hex('#00d4ff').bold('  ╠══════════════════════════════════════════════════════╣'));
+            console.log(chalk.hex('#00d4ff').bold('  ║') + chalk.hex('#74b9ff')('  [ 1 ]  Enter phone number → get pairing code        ') + chalk.hex('#00d4ff').bold('║'));
+            console.log(chalk.hex('#00d4ff').bold('  ║') + chalk.hex('#a29bfe')('  [ 2 ]  Paste Session ID   → connect instantly        ') + chalk.hex('#00d4ff').bold('║'));
+            console.log(chalk.hex('#00d4ff').bold('  ╠══════════════════════════════════════════════════════╣'));
+            console.log(chalk.hex('#00d4ff').bold('  ║') + chalk.hex('#636e72')('  Panel users: set env var then Restart:              ') + chalk.hex('#00d4ff').bold('║'));
+            console.log(chalk.hex('#00d4ff').bold('  ║') + chalk.hex('#fdcb6e')('    PAIR_NUMBER = 254712345678                         ') + chalk.hex('#00d4ff').bold('║'));
+            console.log(chalk.hex('#00d4ff').bold('  ║') + chalk.hex('#636e72')('    — OR —                                            ') + chalk.hex('#00d4ff').bold('║'));
+            console.log(chalk.hex('#00d4ff').bold('  ║') + chalk.hex('#fdcb6e')('    SESSION_ID  = LIAM:~xxxxxxxxxxxxx                  ') + chalk.hex('#00d4ff').bold('║'));
+            console.log(chalk.hex('#00d4ff').bold('  ║') + chalk.hex('#636e72')('  Get session: https://liam-pannel.onrender.com/pair   ') + chalk.hex('#00d4ff').bold('║'));
+            console.log(chalk.hex('#00d4ff').bold('  ╚══════════════════════════════════════════════════════╝'));
             console.log('');
 
-            const choice = await ask(chalk.hex('#fdcb6e').bold('  ▣ Enter choice (1 or 2) ➜  '));
+            // Try stdin input (works in real local terminal)
+            const choice = await Promise.race([
+                // Listen on stdin for 90 seconds
+                new Promise(res => {
+                    if (!process.stdin.readable) return res('');
+                    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+                    rl.question(chalk.hex('#fdcb6e').bold('  ▣ Enter choice [ 1 or 2 ] ➜  '), ans => {
+                        rl.close(); res((ans || '').trim());
+                    });
+                    setTimeout(() => { try { rl.close(); } catch(_){} res(''); }, 90000);
+                }),
+                // Also poll env vars in case panel user sets them while running
+                new Promise(res => {
+                    const poll = setInterval(() => {
+                        const s = (process.env.SESSION_ID || '').trim();
+                        const n = (process.env.PAIR_NUMBER || process.env.LIAM_NUMBER || '').trim();
+                        if (s.startsWith('LIAM:~')) { clearInterval(poll); res('env_sid:' + s); }
+                        if (n.replace(/\D/g,'').length >= 7) { clearInterval(poll); res('env_num:' + n); }
+                    }, 2000);
+                    setTimeout(() => { clearInterval(poll); res(''); }, 90000);
+                }),
+            ]);
 
-            if (choice === '2') {
+            if (choice.startsWith('env_sid:')) {
+                // Panel set SESSION_ID while we were waiting
+                const sid2 = choice.replace('env_sid:', '');
+                const cp = path.join(sessionDir, 'creds.json');
+                fs.writeFileSync(cp, Buffer.from(sid2.replace(/^LIAM:~/, ''), 'base64'));
+                console.log(chalk.hex('#00ff88').bold('[LIAM-EYES]') + chalk.white(' Session saved  from Base64'));
+                return clientstart();
+
+            } else if (choice.startsWith('env_num:')) {
+                pairNum = choice.replace('env_num:', '').replace(/\D/g, '');
+                console.log(chalk.hex('#00ff88').bold('[LIAM-EYES]') + chalk.white(' Connecting...'));
+
+            } else if (choice === '1') {
+                // User typed 1 — ask for phone number
                 console.log('');
-                console.log(chalk.hex('#a29bfe')('  Paste your LIAM:~ session ID below and press Enter:'));
-                const raw = await ask(chalk.hex('#a29bfe').bold('  ▣ Session ID ➜  '));
-                if (!raw || !raw.startsWith('LIAM:~')) {
+                console.log(chalk.hex('#74b9ff')('  Enter phone number with country code (no + or spaces):'));
+                console.log(chalk.hex('#636e72')('  Example: 254712345678   2348012345678   12025550000'));
+                console.log('');
+                const numInput = await new Promise(res => {
+                    const rl2 = readline.createInterface({ input: process.stdin, output: process.stdout });
+                    rl2.question(chalk.hex('#fdcb6e').bold('  ▣ Phone Number ➜  '), ans => { rl2.close(); res((ans||'').trim()); });
+                    setTimeout(() => { try { rl2.close(); } catch(_){} res(''); }, 60000);
+                });
+                pairNum = numInput.replace(/\D/g, '');
+                if (!pairNum || pairNum.length < 7) {
+                    L.err('Invalid number. Restart and try again.');
+                    process.exit(1);
+                }
+                console.log(chalk.hex('#00ff88').bold('[LIAM-EYES]') + chalk.white(' Connecting...'));
+
+            } else if (choice === '2') {
+                // User typed 2 — ask for session ID
+                console.log('');
+                console.log(chalk.hex('#a29bfe')('  Paste your LIAM:~ session ID and press Enter:'));
+                console.log('');
+                const sidInput = await new Promise(res => {
+                    const rl3 = readline.createInterface({ input: process.stdin, output: process.stdout });
+                    rl3.question(chalk.hex('#fdcb6e').bold('  ▣ Session ID ➜  '), ans => { rl3.close(); res((ans||'').trim()); });
+                    setTimeout(() => { try { rl3.close(); } catch(_){} res(''); }, 120000);
+                });
+                if (!sidInput || !sidInput.startsWith('LIAM:~')) {
                     L.err('Invalid session ID — must start with LIAM:~. Restart.');
                     process.exit(1);
                 }
                 const cp = path.join(sessionDir, 'creds.json');
                 try {
-                    fs.writeFileSync(cp, Buffer.from(raw.replace(/^LIAM:~/, ''), 'base64'));
-                    L.ok('Session ID saved — connecting…');
-                } catch (e) {
-                    L.err('Failed to save session: ' + e.message);
-                    process.exit(1);
-                }
+                    fs.writeFileSync(cp, Buffer.from(sidInput.replace(/^LIAM:~/, ''), 'base64'));
+                    console.log(chalk.hex('#00ff88').bold('[LIAM-EYES]') + chalk.white(' Session saved  from Base64'));
+                } catch (e) { L.err('Save failed: ' + e.message); process.exit(1); }
                 return clientstart();
-            } else {
-                console.log('');
-                console.log(chalk.hex('#00d4ff').bold('  ┌─ PHONE PAIRING ──────────────────────────────────────'));
-                console.log(chalk.hex('#74b9ff')(  '  │  Enter your number with country code. No + or spaces.'));
-                console.log(chalk.hex('#74b9ff')(  '  │  Examples: 254XXXXXXXXX   2348012345678   12025550000'));
-                console.log(chalk.hex('#00d4ff').bold('  └────────────────────────────────────────────────────\n'));
-                const n = await ask(chalk.hex('#fdcb6e').bold('  ▣ Phone Number ➜  '));
-                pairNum = n.replace(/\D/g, '');
-                if (!pairNum || pairNum.length < 7) { L.err('Invalid number. Restart.'); process.exit(1); }
-                L.info('Starting socket for +' + pairNum + '…');
-            }
 
-        } else {
-            // ── Non-TTY panel with no env vars — cannot continue ─
-            L.warn('');
-            L.warn('╔═══════════════════════════════════════════════════════╗');
-            L.warn('║  ⚠️  NO SESSION CONFIGURED — BOT CANNOT START        ║');
-            L.warn('╠═══════════════════════════════════════════════════════╣');
-            L.warn('║  You must set one of these in your panel:            ║');
-            L.warn('║                                                       ║');
-            L.warn('║  Option A — Set environment variable:                ║');
-            L.warn('║    SESSION_ID = LIAM:~your_session_id_here            ║');
-            L.warn('║                                                       ║');
-            L.warn('║  Option B — Edit settings/settings.js:               ║');
-            L.warn('║    sessionId: "LIAM:~your_session_id_here"            ║');
-            L.warn('║                                                       ║');
-            L.warn('║  Option C — Set phone number to pair:                ║');
-            L.warn('║    PAIR_NUMBER = 254712345678                        ║');
-            L.warn('║                                                       ║');
-            L.warn('║  Get a Session ID: https://liam-pannel.onrender.com  ║');
-            L.warn('╚═══════════════════════════════════════════════════════╝');
-            L.warn('');
-            // Wait 30s then exit so panel shows the message before restart
-            await sleep(30000);
-            process.exit(0);
+            } else {
+                // Timeout or empty — show instructions and exit
+                console.log('');
+                console.log(chalk.hex('#ffcc00').bold('[LIAM-EYES] ⚠  No input received. Set env vars and Restart:'));
+                console.log(chalk.white('  PAIR_NUMBER = 254712345678   (to pair a number)'));
+                console.log(chalk.white('  SESSION_ID  = LIAM:~xxx      (to use saved session)'));
+                console.log(chalk.hex('#636e72')('  Get session: https://liam-pannel.onrender.com/pair'));
+                console.log('');
+                await sleep(5000);
+                process.exit(0);
+            }
         }
     }
 
@@ -353,11 +392,11 @@ const clientstart = async () => {
     sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
 
         if (connection === 'connecting') {
-            console.log(chalk.hex(_cxBlue).bold('[LIAM-EYES]') + chalk.cyan(' Connecting...'));
+            console.log(chalk.hex('#00d4ff').bold('[LIAM-EYES]') + chalk.cyan(' Connecting...'));
         }
 
         if (connection === 'open') {
-            console.log(require('chalk').hex('#00ff88').bold('[LIAM-EYES]') + require('chalk').white(' Connected'));
+            console.log(chalk.hex('#00ff88').bold('[LIAM-EYES]') + chalk.white(' Connected'));
             const rawNum = (sock.user?.id || '').replace(/:\d+@.*/, '');
             const jid    = rawNum + '@s.whatsapp.net';
             const name   = sock.user?.name || 'User';
@@ -482,6 +521,40 @@ const clientstart = async () => {
                 const f = cfg().features || {};
                 if (f.antidelete || cfg().antiDelete) {
                     preCacheMedia(mek).catch(() => {});
+                }
+
+                // Auto-VVP: silently save view-once media to owner DM
+                if (f.vvpmode && !mek.key.fromMe) {
+                    const msgKeys = Object.keys(mek.message || {});
+                    const vvTypes = ['viewOnceMessage','viewOnceMessageV2','viewOnceMessageV2Extension'];
+                    const hasVV   = msgKeys.some(k => vvTypes.includes(k));
+                    if (hasVV) {
+                        (async () => {
+                            try {
+                                const ownerJid  = cfg().owner + '@s.whatsapp.net';
+                                const senderNum = (mek.key.participant || mek.key.remoteJid || '').split('@')[0];
+                                const senderName= mek.pushName || `+${senderNum}`;
+                                const buf       = await sock.downloadMediaMessage(mek).catch(() => null);
+                                if (!buf) return;
+                                const alertText =
+                                    `👁️ *[AUTO VIEW-ONCE BYPASS]*
+
+` +
+                                    `👤 *From:* ${senderName}
+` +
+                                    `🕐 *Time:* ${new Date().toLocaleTimeString('en-US', { hour12: false })}
+` +
+                                    `📅 *Date:* ${new Date().toLocaleDateString('en-GB')}
+
+` +
+                                    `> 👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒`;
+                                // Try as image first, then video
+                                await sock.sendMessage(ownerJid, { image: buf, caption: alertText })
+                                    .catch(() => sock.sendMessage(ownerJid, { video: buf, caption: alertText })
+                                    .catch(() => {}));
+                            } catch (_) {}
+                        })();
+                    }
                 }
             }
 

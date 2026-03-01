@@ -67,4 +67,6 @@ module.exports = [
     mk('autotype',         'autotyping',      'Auto Typing Indicator',   '⌨️'),
     mk('autoviewstatus',   'autoviewstatus',  'Auto View Status',        '👀'),
     mk('chatbot',          'chatbot',         'AI Chatbot',              '🤖'),
+    mk('ghost',            'ghost',           'Ghost/Invisible Mode',    '👻'),
+    mk('vvpmode',          'vvpmode',         'Auto VVP (View Once Save)','👁️'),
 ];

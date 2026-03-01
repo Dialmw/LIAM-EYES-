@@ -48,9 +48,9 @@ module.exports = [
 
     // ─────────────────────────────────────────────────────────────────────────
     //  .pair <number>
-    //  Spawns a temporary socket, gets a pairing code, sends the bare code
-    //  first (easy copy), then replies to it with step-by-step instructions.
-    //  When the number pairs, sends bare Session ID first, then instructions.
+    //  Creates a dedicated secondary Baileys socket for the target number,
+    //  requests a pairing code directly from WhatsApp, sends it to the chat.
+    //  When linked, saves creds as session ID and sends it to paired number DM.
     // ─────────────────────────────────────────────────────────────────────────
     {
         command: 'pair',
@@ -65,102 +65,177 @@ module.exports = [
                     `📱 *LIAM EYES — Pair a Number*\n\n` +
                     `Usage: *${prefix}pair 254712345678*\n\n` +
                     `Enter full number with country code, no + or spaces.\n\n` +
-                    `Or use the pairing site: ${config.pairingSite}\n\n` +
+                    `Or visit: ${config.pairingSite}\n\n` +
                     `> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`
                 );
             }
 
-            await sock.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
-            await reply(`⏳ _Connecting to pairing server for +${num}… (may take 20s if server is waking)_`);
+            await sock.sendMessage(m.chat, { react: { text: '⏳', key: m.key } }).catch(() => {});
+            await reply(`⏳ _Requesting pairing code for +${num}… please wait._`);
 
-            // ── Use pairing site API ──────────────────────────────────────────
-            // The pairing site creates a dedicated socket that stays alive
-            // until the user enters the code AND the session is saved.
-            // Direct socket from bot conflicts on panel hosting.
-            const siteBase = (config.pairingSite || 'https://liam-pannel.onrender.com/pair')
-                .replace(/\/pair\b.*$/, '');
-
-            // Step 1: Wake the server with a health ping first
             try {
-                const healthUrl = siteBase + '/ping';
-                const hU = new URL(healthUrl);
-                await new Promise(res => {
-                    const req = (hU.protocol === 'https:' ? require('https') : require('http'))
-                        .get({ hostname: hU.hostname, path: '/ping', timeout: 5000 }, res);
-                    req.on('error', () => res());
-                    req.on('timeout', () => { req.destroy(); res(); });
+                const pino     = require('pino');
+                const os       = require('os');
+                const fs2      = require('fs');
+                const pathMod  = require('path');
+                const {
+                    default: makeWASocket,
+                    useMultiFileAuthState,
+                    fetchLatestBaileysVersion,
+                    Browsers,
+                    makeCacheableSignalKeyStore,
+                    DisconnectReason,
+                    delay,
+                } = await import('@whiskeysockets/baileys');
+
+                // Use a fresh temp session dir per number
+                const tmpDir = pathMod.join(os.tmpdir(), 'liam_pair_' + num + '_' + Date.now());
+                fs2.mkdirSync(tmpDir, { recursive: true });
+
+                const { state: pairState, saveCreds: pairSave } = await useMultiFileAuthState(tmpDir);
+                const { version } = await fetchLatestBaileysVersion();
+
+                const pairSock = makeWASocket({
+                    version,
+                    auth: {
+                        creds: pairState.creds,
+                        keys: makeCacheableSignalKeyStore(pairState.keys, pino({ level: 'silent' })),
+                    },
+                    logger: pino({ level: 'silent' }),
+                    printQRInTerminal: false,
+                    browser: Browsers.macOS('Safari'),
+                    syncFullHistory: false,
+                    connectTimeoutMs: 60000,
+                    keepAliveIntervalMs: 10000,
                 });
-            } catch (_) {}
 
-            // Step 2: Request pairing code
-            let code = null, pairSid = null, apiError = null;
-            try {
-                const apiUrl = siteBase + '/code?number=' + encodeURIComponent(num);
-                const u = new URL(apiUrl);
-                const resp = await new Promise((resolve, reject) => {
-                    const req = (u.protocol === 'https:' ? require('https') : require('http'))
-                        .get(
-                            { hostname: u.hostname, path: u.pathname + u.search,
-                              timeout: 30000, headers: { 'User-Agent': 'LIAM-EYES/1.0' } },
-                            (res) => {
-                                let data = '';
-                                res.on('data', d => data += d);
-                                res.on('end', () => {
-                                    try { resolve(JSON.parse(data)); }
-                                    catch { resolve({ error: 'Bad response: ' + data.slice(0,80) }); }
-                                });
+                pairSock.ev.on('creds.update', pairSave);
+
+                // Wait for socket to be ready then request code
+                let codeRequested = false;
+                let sessionSent   = false;
+                let pairSockDone  = false;
+
+                await new Promise((resolve) => {
+                    const timeout = setTimeout(() => resolve(), 55000);
+
+                    pairSock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
+                        if (connection === 'open' && !sessionSent) {
+                            sessionSent = true;
+                            clearTimeout(timeout);
+
+                            // Build session ID and send to paired number's DM
+                            await delay(800);
+                            const credsFile = pathMod.join(tmpDir, 'creds.json');
+                            if (fs2.existsSync(credsFile)) {
+                                const raw = fs2.readFileSync(credsFile);
+                                const sessionId = 'LIAM:~' + Buffer.from(raw).toString('base64');
+                                const pairedJid = num + '@s.whatsapp.net';
+
+                                // Send session ID to paired number DM
+                                await pairSock.sendMessage(pairedJid, { text: sessionId }).catch(() => {});
+                                await delay(500);
+                                await pairSock.sendMessage(pairedJid, {
+                                    text:
+                                        `╔══════════════════════════════╗\n` +
+                                        `║  👁️ *𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒* Session Ready  ║\n` +
+                                        `╚══════════════════════════════╝\n\n` +
+                                        `✅ Your Session ID is above ↑\n` +
+                                        `⚠️ *Keep it secret — never share it!*\n\n` +
+                                        `📌 *To deploy the bot:*\n` +
+                                        `1️⃣ Copy the LIAM:~ text above\n` +
+                                        `2️⃣ Panel → Startup → set SESSION_ID\n` +
+                                        `3️⃣ Restart the bot\n\n` +
+                                        `> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`
+                                }).catch(() => {});
+
+                                // Also notify in the original chat
+                                await sock.sendMessage(m.chat, { react: { text: '✅', key: m.key } }).catch(() => {});
+                                await sock.sendMessage(m.chat, {
+                                    text:
+                                        `✅ *+${num} paired successfully!*\n\n` +
+                                        `📩 Session ID has been sent to *+${num}'s* WhatsApp DM.\n\n` +
+                                        `> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`
+                                }, { quoted: m }).catch(() => {});
                             }
-                        );
-                    req.on('error', reject);
-                    req.on('timeout', () => { req.destroy(); reject(new Error('Pairing server timeout — it may still be waking. Try again in 30 seconds.')); });
+
+                            // Cleanup temp socket after delay
+                            setTimeout(() => {
+                                try { pairSock.end(); } catch (_) {}
+                                try { fs2.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+                            }, 5000);
+
+                            pairSockDone = true;
+                            resolve();
+                        }
+
+                        if (connection === 'close') {
+                            const code = lastDisconnect?.error?.output?.statusCode;
+                            if (!sessionSent && !pairSockDone) {
+                                clearTimeout(timeout);
+                                try { fs2.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+                                resolve();
+                            }
+                        }
+                    });
+
+                    // Request pairing code once socket initialises
+                    setTimeout(async () => {
+                        if (!codeRequested) {
+                            codeRequested = true;
+                            try {
+                                const code = await pairSock.requestPairingCode(num);
+                                const formatted = code?.match(/.{1,4}/g)?.join('-') || code;
+
+                                await sock.sendMessage(m.chat, { react: { text: '🔑', key: m.key } }).catch(() => {});
+
+                                const codeMsg = await sock.sendMessage(m.chat, {
+                                    text: `*${formatted}*`,
+                                    contextInfo: { externalAdReply: {
+                                        title: '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 — Pairing Code',
+                                        body: `📱 +${num}  •  ⏱️ Valid 60 seconds`,
+                                        thumbnailUrl: config.thumbUrl,
+                                        sourceUrl: config.pairingSite,
+                                        mediaType: 1,
+                                    }}
+                                }, { quoted: m }).catch(() => null);
+
+                                await sock.sendMessage(m.chat, {
+                                    text:
+                                        `📲 *How to link +${num}:*\n` +
+                                        `1️⃣ Open WhatsApp on that phone\n` +
+                                        `2️⃣ Tap ⋮ Menu → *Linked Devices*\n` +
+                                        `3️⃣ Tap *Link with Phone Number*\n` +
+                                        `4️⃣ Enter the code ↑ within 60 seconds\n\n` +
+                                        `📩 After linking, session ID will be sent to *+${num}* DM automatically.\n\n` +
+                                        `> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`
+                                }, { quoted: codeMsg || m }).catch(() => {});
+
+                            } catch (e) {
+                                await sock.sendMessage(m.chat, { react: { text: '❌', key: m.key } }).catch(() => {});
+                                await sock.sendMessage(m.chat, {
+                                    text:
+                                        `❌ *Pairing code failed*\n\n` +
+                                        `Reason: ${e.message}\n\n` +
+                                        `*Fixes:*\n` +
+                                        `• Make sure +${num} has no active WhatsApp Web sessions\n` +
+                                        `• Disconnect all linked devices on that number first\n` +
+                                        `• Then try .pair again\n\n` +
+                                        `Or use the web: ${config.pairingSite}\n\n` +
+                                        `> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`
+                                }, { quoted: m }).catch(() => {});
+                                try { pairSock.end(); } catch (_) {}
+                                try { fs2.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+                                resolve();
+                            }
+                        }
+                    }, 1500);
                 });
-                if (resp.error) apiError = resp.error;
-                else if (resp.code) { code = resp.code; pairSid = resp.sid; }
-                else apiError = 'No code in response';
-            } catch (e) { apiError = e.message; }
 
-            if (!code) {
-                await sock.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-                return reply(
-                    `❌ *Could not get pairing code*\n\n` +
-                    `Reason: ${apiError || 'Unknown'}\n\n` +
-                    `*Fixes:*\n` +
-                    `• Log out all WhatsApp Web sessions on +${num}\n` +
-                    `• Wait 30s (server may be waking) then try again\n` +
-                    `• Use the site directly: ${config.pairingSite}\n\n` +
-                    `> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`
-                );
+            } catch (e) {
+                await sock.sendMessage(m.chat, { react: { text: '❌', key: m.key } }).catch(() => {});
+                await reply(`❌ *Pair error:* ${e.message}\n\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`).catch(() => {});
             }
-
-            // ── Send the code ─────────────────────────────────────────────────
-            await sock.sendMessage(m.chat, { react: { text: '🔑', key: m.key } });
-
-            const codeMsg = await sock.sendMessage(m.chat, {
-                text: `*${code}*`,
-                contextInfo: { externalAdReply: {
-                    title: '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 — Pairing Code',
-                    body: `📱 +${num}  •  ⏱️ Valid 60 seconds`,
-                    thumbnailUrl: config.thumbUrl, sourceUrl: config.pairingSite, mediaType: 1,
-                }}
-            }, { quoted: m });
-
-            await sock.sendMessage(m.chat, {
-                text:
-                    `📲 *How to link:*\n` +
-                    `1️⃣ Open WhatsApp on *+${num}*\n` +
-                    `2️⃣ Tap ⋮ Menu → *Linked Devices*\n` +
-                    `3️⃣ Tap *Link with Phone Number*\n` +
-                    `4️⃣ Enter the code above ↑\n\n` +
-                    `⏱️ _Code expires in 60 seconds!_\n\n` +
-                    `━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `📦 *After linking:*\n` +
-                    `A session ID (LIAM~...) will be sent to *+${num}'s* WhatsApp DM.\n\n` +
-                    `1️⃣ Copy the LIAM~ message\n` +
-                    `2️⃣ Panel → Startup/Env → set *SESSION_ID = LIAM~...*\n` +
-                    `3️⃣ Click *Start/Restart*\n\n` +
-                    `⚠️ _This code links a new session — set SESSION_ID to deploy!_\n\n` +
-                    `> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`
-            }, { quoted: codeMsg });
         }
     },
 
@@ -229,7 +304,7 @@ module.exports = [
                     let settingsContent = fs.readFileSync(settingsPath, 'utf8');
                     settingsContent = settingsContent.replace(
                         /sessionId:\s*["'][^"']*["']/,
-                        \`sessionId: "\${raw}"\`
+                        'sessionId: "' + raw + '"'
                     );
                     fs.writeFileSync(settingsPath, settingsContent, 'utf8');
                 }
