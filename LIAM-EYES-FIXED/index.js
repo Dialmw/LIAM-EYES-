@@ -350,24 +350,85 @@ const clientstart = async () => {
 
     // ── Store ───────────────────────────────────────────────────
     const msgs       = new Map();
-    const nameCache  = new Map(); // senderNum → pushName for anti-delete
-    const mediaCache = new Map(); // msgKey → Buffer (pre-downloaded media for anti-delete)
-    const loadMessage = async (jid, id) => msgs.get(`${jid}:${id}`) || null;
+    const nameCache  = new Map(); // phone → pushName
+    const mediaCache = new Map(); // cacheKey → { buf, type }
+    const vvpCache   = new Map(); // cacheKey → { buf, type, senderName, senderNum, ts }
 
-    // Helper — download & cache media for anti-delete
+    // Normalise JID: strip :N device suffix so lookups are consistent
+    const normJid = j => (j || '').replace(/:\d+(?=@)/, '');
+
+    const loadMessage = async (jid, id) => {
+        return msgs.get(`${normJid(jid)}:${id}`)
+            || msgs.get(`${jid}:${id}`)
+            || null;
+    };
+
+    // ── Unwrap message object through all wrappers ───────────────
+    const unwrapMsg = (msgObj) => {
+        if (!msgObj) return {};
+        const wrappers = [
+            'ephemeralMessage','viewOnceMessage','viewOnceMessageV2',
+            'viewOnceMessageV2Extension','documentWithCaptionMessage',
+        ];
+        let m = msgObj;
+        for (const w of wrappers) {
+            if (m[w]) m = m[w].message || m[w];
+        }
+        return m;
+    };
+
+    // ── Download media from a message object ─────────────────────
+    const dlMedia = async (msgObj) => {
+        const mediaTypes = ['imageMessage','videoMessage','audioMessage','stickerMessage','documentMessage'];
+        const mimeMap    = {
+            imageMessage:'image', videoMessage:'video',
+            audioMessage:'audio', stickerMessage:'sticker', documentMessage:'document',
+        };
+        for (const mt of mediaTypes) {
+            if (!msgObj[mt]) continue;
+            try {
+                const stream = await downloadContentFromMessage(msgObj[mt], mimeMap[mt]);
+                let buf = Buffer.from([]);
+                for await (const chunk of stream) buf = Buffer.concat([buf, chunk]);
+                if (buf.length > 100) return { buf, type: mt };
+            } catch (_) {}
+        }
+        return null;
+    };
+
+    // ── Pre-cache media for anti-delete (runs on every message) ──
     const preCacheMedia = async (mek) => {
-        const msgType = Object.keys(mek.message || {})[0];
-        const mediaTypes = ['imageMessage','videoMessage','audioMessage','stickerMessage'];
-        if (!mediaTypes.includes(msgType)) return;
-        const cacheKey = `${mek.key.remoteJid}:${mek.key.id}`;
-        if (mediaCache.has(cacheKey)) return; // already cached
         try {
-            const buf = await sock.downloadMediaMessage(mek).catch(() => null);
-            if (buf) mediaCache.set(cacheKey, { buf, type: msgType });
-            // Keep cache under 200 entries to avoid memory bloat
-            if (mediaCache.size > 200) {
-                const firstKey = mediaCache.keys().next().value;
-                mediaCache.delete(firstKey);
+            const cacheKey = `${normJid(mek.key.remoteJid)}:${mek.key.id}`;
+            if (mediaCache.has(cacheKey)) return;
+            const unwrapped = unwrapMsg(mek.message || {});
+            const result    = await dlMedia(unwrapped);
+            if (result) {
+                mediaCache.set(cacheKey, result);
+                if (mediaCache.size > 400) mediaCache.delete(mediaCache.keys().next().value);
+            }
+        } catch (_) {}
+    };
+
+    // ── Pre-cache VIEW ONCE media immediately on arrival ─────────
+    const preCacheViewOnce = async (mek) => {
+        try {
+            const msgObj  = mek.message || {};
+            const vvTypes = ['viewOnceMessage','viewOnceMessageV2','viewOnceMessageV2Extension'];
+            const hasVV   = vvTypes.some(t => msgObj[t]);
+            if (!hasVV) return;
+
+            const cacheKey  = `${normJid(mek.key.remoteJid)}:${mek.key.id}`;
+            if (vvpCache.has(cacheKey)) return;
+
+            const senderNum  = normJid(mek.key.participant || mek.key.remoteJid || '').split('@')[0];
+            const senderName = mek.pushName || `+${senderNum}`;
+
+            const unwrapped = unwrapMsg(msgObj);
+            const result    = await dlMedia(unwrapped);
+            if (result) {
+                vvpCache.set(cacheKey, { ...result, senderName, senderNum, ts: Date.now() });
+                if (vvpCache.size > 100) vvpCache.delete(vvpCache.keys().next().value);
             }
         } catch (_) {}
     };
@@ -511,49 +572,49 @@ const clientstart = async () => {
                 mek.message = mek.message.ephemeralMessage.message;
 
             if (mek.key?.remoteJid && mek.key?.id) {
-                msgs.set(`${mek.key.remoteJid}:${mek.key.id}`, mek);
-                // Cache sender's pushName for anti-delete name display
+                // Store with normalised JID so anti-delete lookups always match
+                const nJid = normJid(mek.key.remoteJid);
+                msgs.set(`${nJid}:${mek.key.id}`, mek);
+                msgs.set(`${mek.key.remoteJid}:${mek.key.id}`, mek); // also store raw JID as fallback
+
+                // Cache sender pushName
                 if (mek.pushName) {
-                    const sNum = (mek.key.participant || mek.key.remoteJid || '').split('@')[0];
+                    const sNum = normJid(mek.key.participant || mek.key.remoteJid || '').split('@')[0];
                     if (sNum) nameCache.set(sNum, mek.pushName);
                 }
-                // Pre-download media so anti-delete can forward it even after deletion
-                const f = cfg().features || {};
-                if (f.antidelete || cfg().antiDelete) {
-                    preCacheMedia(mek).catch(() => {});
-                }
 
-                // Auto-VVP: silently save view-once media to owner DM
+                const f = cfg().features || {};
+
+                // Always pre-cache media (needed for anti-delete to forward media)
+                preCacheMedia(mek).catch(() => {});
+
+                // Pre-cache view-once immediately (before WA marks it read)
+                if (!mek.key.fromMe) preCacheViewOnce(mek).catch(() => {});
+
+                // Auto-VVP mode: forward view-once to owner DM automatically
                 if (f.vvpmode && !mek.key.fromMe) {
                     const msgKeys = Object.keys(mek.message || {});
                     const vvTypes = ['viewOnceMessage','viewOnceMessageV2','viewOnceMessageV2Extension'];
-                    const hasVV   = msgKeys.some(k => vvTypes.includes(k));
-                    if (hasVV) {
-                        (async () => {
+                    if (msgKeys.some(k => vvTypes.includes(k))) {
+                        setTimeout(async () => {
                             try {
-                                const ownerJid  = cfg().owner + '@s.whatsapp.net';
-                                const senderNum = (mek.key.participant || mek.key.remoteJid || '').split('@')[0];
-                                const senderName= mek.pushName || `+${senderNum}`;
-                                const buf       = await sock.downloadMediaMessage(mek).catch(() => null);
-                                if (!buf) return;
-                                const alertText =
-                                    `👁️ *[AUTO VIEW-ONCE BYPASS]*
+                                const cacheKey  = `${nJid}:${mek.key.id}`;
+                                const cached    = vvpCache.get(cacheKey);
+                                if (!cached) return;
+                                const ownerJid  = normJid(cfg().owner) + '@s.whatsapp.net';
+                                const alertText = `👁️ *[AUTO VVP — View Once]*
 
-` +
-                                    `👤 *From:* ${senderName}
-` +
-                                    `🕐 *Time:* ${new Date().toLocaleTimeString('en-US', { hour12: false })}
-` +
-                                    `📅 *Date:* ${new Date().toLocaleDateString('en-GB')}
+👤 *From:* ${cached.senderName}
+🕐 ${new Date().toLocaleTimeString('en-US', { hour12: false })} • ${new Date().toLocaleDateString('en-GB')}
 
-` +
-                                    `> 👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒`;
-                                // Try as image first, then video
-                                await sock.sendMessage(ownerJid, { image: buf, caption: alertText })
-                                    .catch(() => sock.sendMessage(ownerJid, { video: buf, caption: alertText })
-                                    .catch(() => {}));
+> 👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒`;
+                                if (cached.type === 'videoMessage') {
+                                    await sock.sendMessage(ownerJid, { video: cached.buf, caption: alertText }).catch(() => {});
+                                } else {
+                                    await sock.sendMessage(ownerJid, { image: cached.buf, caption: alertText }).catch(() => {});
+                                }
                             } catch (_) {}
-                        })();
+                        }, 2000); // slight delay to ensure pre-cache completes
                     }
                 }
             }
@@ -593,31 +654,45 @@ const clientstart = async () => {
                     });
                 }
 
-                // Always cache status messages (needed for anti-delete)
-                msgs.set(`status:${mek.key.id}:${mek.key.participant}`, mek);
-                // Also cache the sender name for anti-delete status display
-                if (mek.pushName && mek.key.participant) {
-                    const sn = mek.key.participant.split('@')[0];
-                    if (sn) nameCache.set(sn, mek.pushName);
+                // Cache status with ALL key formats so deletion lookup always hits
+                const statusParticipant = mek.key.participant || mek.key.remoteJid || '';
+                const normSP = normJid(statusParticipant);
+                const sNum_  = normSP.split('@')[0];
+                // Store under every possible key format
+                msgs.set(`status:${mek.key.id}:${statusParticipant}`, mek);
+                msgs.set(`status:${mek.key.id}:${normSP}`, mek);
+                msgs.set(`status:${mek.key.id}:${sNum_}`, mek);
+                msgs.set(`status@broadcast:${mek.key.id}`, mek);
+                msgs.set(`${mek.key.remoteJid}:${mek.key.id}`, mek);
+                // Cache sender name
+                if (sNum_) {
+                    const name_ = mek.pushName || nameCache.get(sNum_);
+                    if (name_) nameCache.set(sNum_, name_);
                 }
+                // Pre-cache status media immediately for anti-delete
+                preCacheMedia(mek).catch(() => {});
 
-                // Forward status content to owner DM
-                if (f.autosavestatus || f.autoviewstatus) {
+                // Forward status content to owner DM (when autosavestatus OR antideletestatus enabled)
+                if (f.autosavestatus || f.autoviewstatus || f.antideletestatus) {
                     const msgType = Object.keys(mek.message || {})[0];
                     const caption = `📸 *[Status from +${num}]*`;
                     try {
-                        if (msgType === 'imageMessage') {
-                            const buf = await sock.downloadMediaMessage(mek).catch(() => null);
-                            if (buf) sock.sendMessage(ownerJid, { image: buf, caption }).catch(() => {});
-                        } else if (msgType === 'videoMessage') {
-                            const buf = await sock.downloadMediaMessage(mek).catch(() => null);
-                            if (buf) sock.sendMessage(ownerJid, { video: buf, caption }).catch(() => {});
-                        } else if (msgType === 'audioMessage') {
-                            const buf = await sock.downloadMediaMessage(mek).catch(() => null);
-                            if (buf) sock.sendMessage(ownerJid, { audio: buf, mimetype: 'audio/mp4', caption }).catch(() => {});
+                        const name_  = mek.pushName || nameCache.get(num) || `+${num}`;
+                        const ts_    = mek.messageTimestamp ? new Date(mek.messageTimestamp * 1000) : new Date();
+                        const hh     = String(ts_.getHours()).padStart(2,'0');
+                        const mn     = String(ts_.getMinutes()).padStart(2,'0');
+                        const cap2   = `📸 *Status from ${name_}* (+${num})\n🕐 ${hh}:${mn}\n\n> 👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒`;
+                        if (msgType === 'imageMessage' || msgType === 'videoMessage' || msgType === 'audioMessage' || msgType === 'stickerMessage') {
+                            const res = await dlMedia(mek.message || {});
+                            if (res && res.buf) {
+                                if (res.type === 'videoMessage') sock.sendMessage(ownerJid, { video: res.buf, caption: cap2 }).catch(() => {});
+                                else if (res.type === 'audioMessage') sock.sendMessage(ownerJid, { audio: res.buf, mimetype: 'audio/mp4', ptt: false, caption: cap2 }).catch(() => {});
+                                else if (res.type === 'stickerMessage') { sock.sendMessage(ownerJid, { text: cap2 }).catch(() => {}); sock.sendMessage(ownerJid, { sticker: res.buf }).catch(() => {}); }
+                                else sock.sendMessage(ownerJid, { image: res.buf, caption: cap2 }).catch(() => {});
+                            }
                         } else if (msgType === 'conversation' || msgType === 'extendedTextMessage') {
                             const txt = mek.message.conversation || mek.message.extendedTextMessage?.text || '';
-                            if (txt) sock.sendMessage(ownerJid, { text: `📸 *[Status from +${num}]*\n\n${txt}` }).catch(() => {});
+                            if (txt) sock.sendMessage(ownerJid, { text: `${cap2}\n\n💬 _"${txt}"_` }).catch(() => {});
                         }
                     } catch (_) {}
                 }
@@ -634,171 +709,173 @@ const clientstart = async () => {
 
     // ── Anti-delete  +  Anti-edit ─────────────────────────────────
     sock.ev.on('messages.update', async updates => {
-        const f = cfg().features || {};
-        const adEnabled = f.antidelete || cfg().antiDelete;
-        const aeEnabled = f.antiedit;
+        const f          = cfg().features || {};
+        const adEnabled  = f.antidelete  || cfg().antiDelete;
+        const aeEnabled  = f.antiedit;
         const adsEnabled = f.antideletestatus;
         if (!adEnabled && !aeEnabled && !adsEnabled) return;
 
+        // Native date formatter — no moment-timezone needed
+        const fmtTime = (ts) => {
+            const d = new Date(ts || Date.now());
+            const hh = String(d.getHours()).padStart(2,'0');
+            const mm = String(d.getMinutes()).padStart(2,'0');
+            const dd = String(d.getDate()).padStart(2,'0');
+            const mo = String(d.getMonth()+1).padStart(2,'0');
+            const yy = d.getFullYear();
+            return { time: `${hh}:${mm}`, date: `${dd}/${mo}/${yy}` };
+        };
+        const ownerNum = normJid(cfg().owner || (sock.user?.id || '').split(':')[0]);
+        const ownerJid = ownerNum + '@s.whatsapp.net';
+        const botSelf  = normJid(sock.user?.id || '') + '@s.whatsapp.net';
+        const _adTgt   = cfg().antiDeleteTarget || 'owner';
+
+        // Resolve media from cache or live download
+        const resolveMedia = async (del, cacheKey) => {
+            for (const ck of [cacheKey, normJid(cacheKey.split(':')[0]) + ':' + cacheKey.split(':').slice(1).join(':')]) {
+                const c = mediaCache.get(ck);
+                if (c && c.buf && c.buf.length > 100) return c;
+            }
+            return await dlMedia(unwrapMsg(del.message || {}));
+        };
+
+        // Send alert header + deleted content to target
+        const sendAlert = async (tgt, del, header, cacheKey) => {
+            const raw   = unwrapMsg(del.message || {});
+            const mtype = Object.keys(raw)[0] || '';
+            if (mtype === 'conversation' || mtype === 'extendedTextMessage') {
+                const txt = raw.conversation || raw.extendedTextMessage?.text || '';
+                const hdr = await sock.sendMessage(tgt, { text: header }).catch(() => null);
+                if (hdr) sock.sendMessage(tgt, { text: txt ? `\ud83d\udcac _"${txt}"_` : '_[No text content]_' }, { quoted: hdr }).catch(() => {});
+            } else if (mtype === 'imageMessage') {
+                const res = await resolveMedia(del, cacheKey);
+                const cap = raw.imageMessage?.caption || '';
+                if (res && res.buf) await sock.sendMessage(tgt, { image: res.buf, caption: header + (cap ? `\n\n\ud83d\udcdd _"${cap}"_` : '') }).catch(() => {});
+                else sock.sendMessage(tgt, { text: header + '\n\n\ud83d\uddbc\ufe0f _[Image — could not retrieve]_' }).catch(() => {});
+            } else if (mtype === 'videoMessage') {
+                const res = await resolveMedia(del, cacheKey);
+                const cap = raw.videoMessage?.caption || '';
+                if (res && res.buf) await sock.sendMessage(tgt, { video: res.buf, caption: header + (cap ? `\n\n\ud83d\udcdd _"${cap}"_` : '') }).catch(() => {});
+                else sock.sendMessage(tgt, { text: header + '\n\n\ud83c\udfa5 _[Video — could not retrieve]_' }).catch(() => {});
+            } else if (mtype === 'audioMessage') {
+                const res = await resolveMedia(del, cacheKey);
+                const hdr = await sock.sendMessage(tgt, { text: header + '\n\n\ud83c\udfb5 _[Voice/Audio]_' }).catch(() => null);
+                if (res && res.buf && hdr) sock.sendMessage(tgt, { audio: res.buf, mimetype: 'audio/mp4', ptt: !!raw.audioMessage?.ptt }, { quoted: hdr }).catch(() => {});
+            } else if (mtype === 'stickerMessage') {
+                const res = await resolveMedia(del, cacheKey);
+                const hdr = await sock.sendMessage(tgt, { text: header + '\n\n\ud83c\udfad _[Sticker]_' }).catch(() => null);
+                if (res && res.buf && hdr) sock.sendMessage(tgt, { sticker: res.buf }, { quoted: hdr }).catch(() => {});
+            } else if (mtype === 'documentMessage') {
+                const fname = raw.documentMessage?.fileName || 'document';
+                sock.sendMessage(tgt, { text: header + `\n\n\ud83d\udcce _[Document: ${fname}]_` }).catch(() => {});
+            } else if (mtype && mtype !== 'reactionMessage' && mtype !== 'protocolMessage') {
+                sock.sendMessage(tgt, { text: header + `\n\n\ud83d\udce6 _[${mtype}]_` }).catch(() => {});
+            }
+        };
+
         for (const u of updates) {
             const { key, update } = u;
-            const ownerJid = cfg().owner + '@s.whatsapp.net';
+            const protoMsg = update?.message?.protocolMessage;
+            const isProto  = protoMsg?.type === 0;
+            const isStub   = update?.messageStubType === 1;
+            const isRevoke = isProto || isStub;
+            if (!isRevoke && !update?.editedMessage) continue;
 
-            // ── Detect deleted message (stub type 1) ───────────────────
-            // Detect deletion: messageStubType 1 OR protocolMessage REVOKE (type 0)
-            const isRevoke = (update?.messageStubType === 1) ||
-                (update?.message?.protocolMessage?.type === 0);
-            if (isRevoke && adEnabled) {
-                // Check if it was a status
-                if (key.remoteJid === 'status@broadcast' && adsEnabled) {
-                    const skey = `status:${key.id}:${key.participant}`;
-                    const del  = msgs.get(skey);
-                    if (del?.message) {
-                        const num     = (key.participant || '?').replace(/[:\d]+@.*/, '').replace('@s.whatsapp.net','');
-                        const name    = del.pushName || `+${num}`;
-                        const msgType = Object.keys(del.message)[0];
-                        const tz_     = cfg().settings?.timezone || 'Africa/Nairobi';
-                        const mtime   = require('moment-timezone')(del.messageTimestamp ? del.messageTimestamp*1000 : Date.now()).tz(tz_);
-                        const statusAlert =
-                            `🚨 *DELETED STATUS!* 🚨\n\n` +
-                            `👤 *AUTHOR:* ${name}\n` +
-                            `🕐 *TIME:* ${mtime.format('HH:mm')} ${mtime.format('z')}\n` +
-                            `📅 *DATE:* ${mtime.format('DD/MM/YYYY')}\n\n` +
-                            `THIS STATUS WAS DELETED!`;
-                        try {
-                            if (msgType === 'imageMessage') {
-                                const buf = await sock.downloadMediaMessage(del).catch(() => null);
-                                if (buf) {
-                                    // Status image WITH alert caption
-                                    await sock.sendMessage(ownerJid, { image: buf, caption: statusAlert }).catch(() => {});
-                                } else {
-                                    sock.sendMessage(ownerJid, { text: statusAlert + '\n\n🖼️ [Image — download failed]' }).catch(() => {});
-                                }
-                            } else if (msgType === 'videoMessage') {
-                                const buf = await sock.downloadMediaMessage(del).catch(() => null);
-                                if (buf) {
-                                    await sock.sendMessage(ownerJid, { video: buf, caption: statusAlert }).catch(() => {});
-                                } else {
-                                    sock.sendMessage(ownerJid, { text: statusAlert + '\n\n🎥 [Video — download failed]' }).catch(() => {});
-                                }
-                            } else {
-                                const txt = del.message.conversation || del.message.extendedTextMessage?.text || '';
-                                const alertMsg = await sock.sendMessage(ownerJid, { text: statusAlert }).catch(() => null);
-                                if (txt && alertMsg) {
-                                    sock.sendMessage(ownerJid, { text: `"${txt}"` }, { quoted: alertMsg }).catch(() => {});
-                                }
-                            }
-                        } catch (_) {}
-                    }
+            // The key of the ACTUALLY deleted message (not the revoke wrapper)
+            const delKey = (isProto && protoMsg?.key) ? protoMsg.key : key;
+
+            if (isRevoke && (adEnabled || adsEnabled)) {
+                const isStatus = delKey.remoteJid === 'status@broadcast'
+                              || key.remoteJid    === 'status@broadcast';
+
+                // ── DELETED STATUS ────────────────────────────────────
+                if (isStatus && adsEnabled) {
+                    const msgId = delKey.id || key.id || '';
+                    const part  = delKey.participant || key.participant || delKey.remoteJid || '';
+                    const normP = normJid(part);
+                    const sNum  = normP.split('@')[0];
+                    const tryKeys = [
+                        `status:${msgId}:${part}`,
+                        `status:${msgId}:${normP}`,
+                        `status:${msgId}:${sNum}`,
+                        `status@broadcast:${msgId}`,
+                        `${delKey.remoteJid}:${msgId}`,
+                        `${key.remoteJid}:${msgId}`,
+                    ];
+                    let del = null;
+                    for (const sk of tryKeys) { del = msgs.get(sk); if (del && del.message) break; }
+                    if (!del || !del.message) continue;
+
+                    const name  = del.pushName || nameCache.get(sNum) || `+${sNum}`;
+                    const _fmted = fmtTime(del.messageTimestamp ? del.messageTimestamp * 1000 : Date.now());
+                    const header =
+                        `\ud83d\udea8 *DELETED STATUS!* \ud83d\udea8\n\n` +
+                        `\ud83d\udc64 *AUTHOR:* ${name}\n` +
+                        `\ud83d\udcf1 *NUMBER:* +${sNum}\n` +
+                        `\ud83d\udd50 *TIME:* ${_fmted.time}\n` +
+                        `\ud83d\udcc5 *DATE:* ${_fmted.date}\n\n` +
+                        `\ud83d\uddd1\ufe0f _This status was deleted!_`;
+                    await sendAlert(ownerJid, del, header, `status@broadcast:${msgId}`).catch(() => {});
                     continue;
                 }
 
-                const del = msgs.get(`${key.remoteJid}:${key.id}`);
-                if (!del?.message) continue;
+                if (!adEnabled) continue;
 
-                // antiDeleteTarget: "owner" = bot owner DM, "same" = same chat, "bot" = bot's own DM
-                const _adTarget = cfg().antiDeleteTarget || 'owner';
-                const botSelf   = (sock.user?.id || '').replace(/:\d+@.*/, '') + '@s.whatsapp.net';
-                const tgt       = _adTarget === 'same' ? key.remoteJid
-                                : _adTarget === 'bot'  ? botSelf
-                                : ownerJid;  // default: owner DM
-                const deleter  = key.participant || key.remoteJid;
-                const delNum   = deleter.replace(/[:\d]+@.*/, '').replace('@s.whatsapp.net','');
-                const sendJid  = del.key?.participant || del.key?.remoteJid || '';
-                const sendNum  = sendJid.replace(/[:\d]+@.*/, '').replace('@s.whatsapp.net','');
-                // Get sender name from cache (stored when message arrived), fallback to number
-                const senderName  = del.pushName || nameCache.get(sendNum) || `+${sendNum}`;
-                const deleterName = nameCache.get(delNum) || `+${delNum}`;
-                const msgType  = Object.keys(del.message)[0];
-                const tz_      = cfg().settings?.timezone || 'Africa/Nairobi';
-                const mtime    = require('moment-timezone')(del.messageTimestamp ? del.messageTimestamp*1000 : Date.now()).tz(tz_);
+                // ── DELETED DM / GROUP MESSAGE ────────────────────────
+                const nDelJid = normJid(delKey.remoteJid || '');
+                const nEvJid  = normJid(key.remoteJid    || '');
+                const msgId   = delKey.id || key.id || '';
+                const tryKeys = [
+                    `${nDelJid}:${msgId}`,
+                    `${delKey.remoteJid}:${msgId}`,
+                    `${nEvJid}:${msgId}`,
+                    `${key.remoteJid}:${msgId}`,
+                ];
+                let del = null;
+                for (const dk of tryKeys) { del = msgs.get(dk); if (del && del.message) break; }
+                if (!del || !del.message) continue;
+                if (del.key && del.key.fromMe && (delKey.fromMe || key.fromMe)) continue;
 
-                // Alert header — name/number only, no chat ID
-                const alertHdr =
-                    `🚨 *DELETED MESSAGE!* 🚨\n\n` +
-                    `👤 *FROM:* ${senderName}\n` +
-                    `🗑️ *DELETED BY:* ${deleterName}\n` +
-                    `🕐 *TIME:* ${mtime.format('HH:mm')} ${mtime.format('z')}\n` +
-                    `📅 *DATE:* ${mtime.format('DD/MM/YYYY')}`;
+                const tgt = _adTgt === 'same' ? (key.remoteJid || ownerJid)
+                          : _adTgt === 'bot'  ? botSelf
+                          : ownerJid;
 
-                // Use pre-cached media buffer first, fallback to live download
-                const cacheKey    = `${key.remoteJid}:${key.id}`;
-                const cachedMedia = mediaCache.get(cacheKey);
-                const getMedia    = async () => cachedMedia?.buf || await sock.downloadMediaMessage(del).catch(() => null);
+                const deleterJid = key.participant || key.remoteJid || '';
+                const delNum     = normJid(deleterJid).split('@')[0];
+                const senderJid  = (del.key && (del.key.participant || del.key.remoteJid)) || '';
+                const sendNum    = normJid(senderJid).split('@')[0];
+                const senderName = del.pushName || nameCache.get(sendNum) || `+${sendNum}`;
+                const delName    = delNum === sendNum ? senderName : (nameCache.get(delNum) || `+${delNum}`);
+                const _fmted     = fmtTime(del.messageTimestamp ? del.messageTimestamp * 1000 : Date.now());
+                const chatType   = (key.remoteJid || '').endsWith('@g.us') ? '\ud83d\udc65 *Group*' : '\ud83d\udcac *DM*';
 
-                try {
-                    if (msgType === 'conversation' || msgType === 'extendedTextMessage') {
-                        const txt = (
-                            del.message?.conversation ||
-                            del.message?.extendedTextMessage?.text ||
-                            del.message?.extendedTextMessage?.matchedText ||
-                            del.body || ''
-                        );
-                        // Send alert first, then reply to it with the deleted text content
-                        const alertMsg = await sock.sendMessage(tgt, { text: alertHdr }).catch(() => null);
-                        if (alertMsg && txt) {
-                            sock.sendMessage(tgt, { text: `💬 "${txt}"` }, { quoted: alertMsg }).catch(() => {});
-                        } else if (alertMsg && !txt) {
-                            sock.sendMessage(tgt, { text: '_[Message content unavailable — may have been a reply]_' }, { quoted: alertMsg }).catch(() => {});
-                        }
-                    } else if (msgType === 'imageMessage') {
-                        const buf = await getMedia();
-                        const origCaption = del.message.imageMessage?.caption || '';
-                        if (buf) {
-                            // Image with alert as its caption so they arrive together
-                            const mediaMsg = await sock.sendMessage(tgt, {
-                                image: buf,
-                                caption: alertHdr + (origCaption ? `\n\n📝 "${origCaption}"` : '')
-                            }).catch(() => null);
-                        } else {
-                            sock.sendMessage(tgt, { text: alertHdr + '\n\n🖼️ [Image — could not retrieve]' }).catch(() => {});
-                        }
-                    } else if (msgType === 'videoMessage') {
-                        const buf = await getMedia();
-                        const origCaption = del.message.videoMessage?.caption || '';
-                        if (buf) {
-                            const mediaMsg = await sock.sendMessage(tgt, {
-                                video: buf,
-                                caption: alertHdr + (origCaption ? `\n\n📝 "${origCaption}"` : '')
-                            }).catch(() => null);
-                        } else {
-                            sock.sendMessage(tgt, { text: alertHdr + '\n\n🎥 [Video — could not retrieve]' }).catch(() => {});
-                        }
-                    } else if (msgType === 'audioMessage') {
-                        const buf = await getMedia();
-                        // Send alert text, then reply to it with audio
-                        const alertMsg = await sock.sendMessage(tgt, { text: alertHdr + '\n\n🎵 [Voice/Audio]' }).catch(() => null);
-                        if (buf && alertMsg) {
-                            sock.sendMessage(tgt, { audio: buf, mimetype: 'audio/mp4', ptt: !!del.message.audioMessage?.ptt }, { quoted: alertMsg }).catch(() => {});
-                        }
-                    } else if (msgType === 'stickerMessage') {
-                        const buf = await getMedia();
-                        const alertMsg = await sock.sendMessage(tgt, { text: alertHdr + '\n\n🎭 [Sticker]' }).catch(() => null);
-                        if (buf && alertMsg) {
-                            sock.sendMessage(tgt, { sticker: buf }, { quoted: alertMsg }).catch(() => {});
-                        }
-                    } else if (msgType === 'documentMessage') {
-                        const fname = del.message.documentMessage?.fileName || 'file';
-                        sock.sendMessage(tgt, { text: alertHdr + `\n\n📎 [Document: ${fname}]` }).catch(() => {});
-                    } else {
-                        sock.sendMessage(tgt, { text: alertHdr + `\n\n[${msgType}]` }).catch(() => {});
-                    }
-                } catch (_) {}
+                const header =
+                    `\ud83d\udea8 *DELETED MESSAGE!* \ud83d\udea8\n\n` +
+                    `\ud83d\udc64 *FROM:* ${senderName}\n` +
+                    `\ud83d\uddd1\ufe0f *DELETED BY:* ${delName}\n` +
+                    `\ud83d\udccd ${chatType}\n` +
+                    `\ud83d\udd50 *TIME:* ${_fmted.time}\n` +
+                    `\ud83d\udcc5 *DATE:* ${_fmted.date}`;
+
+                await sendAlert(tgt, del, header, `${nDelJid}:${msgId}`).catch(() => {});
             }
 
-            // ── Detect edited message ──────────────────────────────────
-            if (aeEnabled && update?.editedMessage) {
-                const editedText = update.editedMessage?.conversation || update.editedMessage?.extendedTextMessage?.text || '';
-                const orig = msgs.get(`${key.remoteJid}:${key.id}`);
-                const origText = orig?.message?.conversation || orig?.message?.extendedTextMessage?.text || '';
-                const num = (key.participant || key.remoteJid).split('@')[0];
-                if (editedText)
+            // ── Edited message ────────────────────────────────────────
+            if (aeEnabled && update && update.editedMessage) {
+                const editedText = (update.editedMessage.conversation)
+                                || (update.editedMessage.extendedTextMessage && update.editedMessage.extendedTextMessage.text) || '';
+                const orig = msgs.get(`${normJid(key.remoteJid)}:${key.id}`) || msgs.get(`${key.remoteJid}:${key.id}`);
+                const origText = (orig && orig.message && (orig.message.conversation || (orig.message.extendedTextMessage && orig.message.extendedTextMessage.text))) || '';
+                const num = normJid(key.participant || key.remoteJid || '').split('@')[0];
+                if (editedText) {
                     sock.sendMessage(ownerJid, {
-                        text: `✏️ *[LIAM EYES — Edited Message]*\n👤 +${num}\n\n❌ *Before:* ${origText || '[unknown]'}\n\n✅ *After:* ${editedText}`
+                        text: `\u270f\ufe0f *EDITED MESSAGE*\n\n\ud83d\udc64 +${num}\n\n\u274c *Before:* ${origText || '_[unknown]_'}\n\n\u2705 *After:* ${editedText}\n\n> \ud83d\udc41\ufe0f \uD835\uDC0B\uD835\uDC08\uD835\uDC00\uD835\uDC0C \uD835\uDC04\uD835\uDC18\uD835\uDC04\uD835\uDC12`
                     }).catch(() => {});
+                }
             }
         }
     });
+
 
     // ── Welcome / Goodbye ─────────────────────────────────────────
     sock.ev.on('group-participants.update', async ({ id, participants, action }) => {
@@ -880,6 +957,9 @@ _Anti-call is ON. Turn off with .anticall off_
 
     // ── Helpers ───────────────────────────────────────────────────
     sock.public = cfg().status?.public ?? true;
+
+    // Expose vvpCache so plugins (.vvp command) can read from it
+    sock._vvpCache = vvpCache;
 
     sock.downloadMediaMessage = async msg => {
         const mime   = (msg.msg || msg).mimetype || '';

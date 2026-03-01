@@ -38,108 +38,110 @@ module.exports = [
         command: 'vvp',
         category: 'tools',
         description: 'Bypass view-once — saves media to your DM',
-        execute: async (sock, m, { reply, isCreator, isSudo }) => {
-            const ownerJid = config.owner + '@s.whatsapp.net';
+        execute: async (sock, m, { reply }) => {
+            // The bot pre-downloads view-once immediately on arrival into sock._vvpCache.
+            // Reply to any 🔴 view-once message then type .vvp to retrieve it.
+            const ownerJid = (config.owner || '').split('@')[0].split(':')[0] + '@s.whatsapp.net';
 
-            const q = m.quoted || m;
-            const msgObj = q.message || q.msg || {};
-
-            // Detect view-once message types
-            const vvTypes = [
-                'viewOnceMessage',
-                'viewOnceMessageV2',
-                'viewOnceMessageV2Extension',
-                'ephemeralMessage',
-            ];
-
-            let innerMsg = null;
-            let foundType = null;
-
-            for (const t of vvTypes) {
-                if (msgObj[t]) { innerMsg = msgObj[t].message || msgObj[t]; foundType = t; break; }
-            }
-
-            // Also check if the quoted message itself IS the inner content
-            if (!innerMsg) {
-                const directTypes = ['imageMessage', 'videoMessage', 'audioMessage'];
-                for (const dt of directTypes) {
-                    if (msgObj[dt]?.viewOnce) { innerMsg = msgObj; foundType = dt; break; }
-                }
-            }
-
-            if (!innerMsg) {
+            if (!m.quoted) {
                 return reply(
-                    `❗ *Reply to a view-once message*\\n\\n` +
-                    `Usage: Reply to a 🔴 view-once photo/video then type *.vvp*\\n\\n` +
-                    `${sig()}`
+                    `❗ *Reply to a view-once message then type .vvp*\n\n` +
+                    `💡 The bot captures view-once photos/videos automatically as they arrive.\n` +
+                    `Just reply to the 🔴 view-once bubble with *.vvp* and it gets sent to your DM.\n\n` +
+                    `Or type *.vvpmode on* to auto-save ALL view-once without needing .vvp.\n\n${sig()}`
                 );
             }
 
             await sock.sendMessage(m.chat, { react: { text: '👁️', key: m.key } }).catch(() => {});
 
             try {
-                // Try to download the media from the view-once message
                 const { downloadContentFromMessage } = await import('@whiskeysockets/baileys');
 
-                const mediaTypes = ['imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage'];
-                let mediaBuf = null;
-                let mediaType = null;
-                let caption = '';
+                // Normalise a JID (strip device suffix)
+                const normQ = j => (j || '').replace(/:\d+(?=@)/, '');
 
-                for (const mt of mediaTypes) {
-                    const msgContent = innerMsg[mt] || (innerMsg.message && innerMsg.message[mt]);
-                    if (msgContent) {
-                        mediaType = mt;
-                        caption = msgContent.caption || '';
-                        try {
-                            const stream = await downloadContentFromMessage(msgContent, mt.replace('Message', ''));
-                            let buf = Buffer.from([]);
-                            for await (const chunk of stream) buf = Buffer.concat([buf, chunk]);
-                            mediaBuf = buf;
-                        } catch (_) {}
-                        break;
+                // The ID of the quoted message
+                const quotedId  = m.quoted.id || (m.quoted.key && m.quoted.key.id) || '';
+                const quotedJid = normQ(m.quoted.chat || (m.quoted.key && m.quoted.key.remoteJid) || m.chat || '');
+                const chatJid   = normQ(m.chat || '');
+
+                // Build all possible cache keys
+                const cacheKeys = quotedId ? [
+                    `${quotedJid}:${quotedId}`,
+                    `${chatJid}:${quotedId}`,
+                    `${m.chat}:${quotedId}`,
+                ] : [];
+
+                // Check sock._vvpCache (pre-downloaded on arrival)
+                let cached = null;
+                const vvpC = sock._vvpCache;
+                if (vvpC) {
+                    for (const ck of cacheKeys) {
+                        cached = vvpC.get(ck);
+                        if (cached && cached.buf && cached.buf.length > 50) break;
+                        cached = null;
                     }
                 }
 
-                // Fallback: try sock.downloadMediaMessage
-                if (!mediaBuf) {
-                    mediaBuf = await sock.downloadMediaMessage(q).catch(() => null);
+                let mediaBuf   = cached ? cached.buf  : null;
+                let mediaType  = cached ? cached.type : null;
+                let senderName = cached ? cached.senderName : (m.quoted.pushName || m.pushName || 'Unknown');
+
+                // Fallback: try downloading from the quoted message's raw content
+                if (!mediaBuf && quotedId) {
+                    // Try via the fakeObj (Baileys serialized form)
+                    const fakeMsg = (m.quoted.fakeObj && m.quoted.fakeObj.message) || {};
+                    const vvTypes = ['viewOnceMessage','viewOnceMessageV2','viewOnceMessageV2Extension'];
+                    let inner = fakeMsg;
+                    for (const t of vvTypes) { if (fakeMsg[t]) { inner = fakeMsg[t].message || fakeMsg[t]; break; } }
+
+                    const MMAP = { imageMessage:'image', videoMessage:'video', audioMessage:'audio', stickerMessage:'sticker' };
+                    const candidates = [inner, fakeMsg];
+                    outer: for (const obj of candidates) {
+                        for (const [mt, dlType] of Object.entries(MMAP)) {
+                            if (!obj[mt]) continue;
+                            try {
+                                const stream = await downloadContentFromMessage(obj[mt], dlType);
+                                let buf = Buffer.from([]);
+                                for await (const chunk of stream) buf = Buffer.concat([buf, chunk]);
+                                if (buf.length > 50) { mediaBuf = buf; mediaType = mt; break outer; }
+                            } catch (_) {}
+                        }
+                    }
                 }
 
-                if (!mediaBuf) {
-                    return reply(`❌ Could not download view-once media. It may have already expired.\\n\\n${sig()}`);
+                if (!mediaBuf || mediaBuf.length < 50) {
+                    await sock.sendMessage(m.chat, { react: { text: '❌', key: m.key } }).catch(() => {});
+                    return reply(
+                        `❌ *Could not retrieve view-once media*\n\n` +
+                        `_It may have expired or already been cleared by WhatsApp._\n\n` +
+                        `💡 Enable *.vvpmode on* so the bot automatically saves all view-once as they arrive — no command needed.\n\n${sig()}`
+                    );
                 }
 
-                const senderNum = (q.key?.participant || q.key?.remoteJid || '').split('@')[0];
-                const senderName = q.pushName || m.pushName || `+${senderNum}`;
                 const alertText =
-                    `👁️ *[VIEW ONCE BYPASS]*\\n\\n` +
-                    `👤 *From:* ${senderName}\\n` +
-                    `🕐 *Time:* ${new Date().toLocaleTimeString('en-US', { hour12: false })}\\n` +
-                    `📅 *Date:* ${new Date().toLocaleDateString('en-GB')}\\n\\n` +
-                    (caption ? `💬 _"${caption}"_\\n\\n` : '') +
+                    `👁️ *[VIEW ONCE BYPASS]* 🔓\n\n` +
+                    `👤 *From:* ${senderName}\n` +
+                    `🕐 *Time:* ${new Date().toLocaleTimeString('en-US', { hour12: false })}\n` +
+                    `📅 *Date:* ${new Date().toLocaleDateString('en-GB')}\n\n` +
                     `${sig()}`;
 
-                // Send to owner DM
                 if (mediaType === 'videoMessage') {
                     await sock.sendMessage(ownerJid, { video: mediaBuf, caption: alertText }).catch(() => {});
                 } else if (mediaType === 'audioMessage') {
-                    await sock.sendMessage(ownerJid, { text: alertText }).catch(() => {});
-                    await sock.sendMessage(ownerJid, { audio: mediaBuf, mimetype: 'audio/mp4', ptt: true }).catch(() => {});
-                } else if (mediaType === 'stickerMessage') {
-                    await sock.sendMessage(ownerJid, { text: alertText }).catch(() => {});
-                    await sock.sendMessage(ownerJid, { sticker: mediaBuf }).catch(() => {});
+                    const hdrMsg = await sock.sendMessage(ownerJid, { text: alertText }).catch(() => null);
+                    sock.sendMessage(ownerJid, { audio: mediaBuf, mimetype: 'audio/mp4', ptt: true },
+                        hdrMsg ? { quoted: hdrMsg } : {}).catch(() => {});
                 } else {
-                    // Image (default)
                     await sock.sendMessage(ownerJid, { image: mediaBuf, caption: alertText }).catch(() => {});
                 }
 
                 await sock.sendMessage(m.chat, { react: { text: '✅', key: m.key } }).catch(() => {});
-                await reply(`✅ *View-once media saved to your DM!* 📩\\n\\n${sig()}`);
+                await reply(`✅ *View-once saved to your DM!* 📩\n\n${sig()}`);
 
             } catch (e) {
                 await sock.sendMessage(m.chat, { react: { text: '❌', key: m.key } }).catch(() => {});
-                reply(`❌ VVP failed: ${e.message}\\n\\n${sig()}`);
+                reply(`❌ VVP error: ${e.message}\n\n${sig()}`);
             }
         }
     },
