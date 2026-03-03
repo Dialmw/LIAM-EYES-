@@ -372,8 +372,18 @@ module.exports = async (sock, m, chatUpdate, store) => {
         if (BOT_PAUSED && !isCreator) return;
         if (BOT_PAUSED && isCmd && command !== 'wake') return;
 
-        // reply — plain text (thumbnail only shown in .menu, not every command)
-        const reply = txt => sock.sendMessage(m.chat, { text: txt }, { quoted: m }).catch(()=>{});
+        // reply WITH thumbnail — use pre-loaded local buffer (fast, no HTTP)
+        const reply = async txt => {
+            try {
+                if (image && image.length > 0) {
+                    await sock.sendMessage(m.chat, { image, caption: txt }, { quoted: m });
+                } else {
+                    await sock.sendMessage(m.chat, { text: txt }, { quoted: m });
+                }
+            } catch (_) {
+                await sock.sendMessage(m.chat, { text: txt }, { quoted: m }).catch(()=>{});
+            }
+        };
         // reply WITHOUT thumbnail (numbered menu style — clean look)
         const replyPlain = txt => sock.sendMessage(m.chat, { text: txt }, { quoted: m });
 
@@ -438,13 +448,27 @@ module.exports = async (sock, m, chatUpdate, store) => {
             }
         }
 
-                // ── Auto-reply: "bot" mention
+        // ── Auto-reply when anyone mentions "bot" ────────────────────────────
         if (!m.key.fromMe && !isCmd && /\bbot\b/i.test(body)) {
             const ph = config.pairingSite || 'https://liam-pannel.onrender.com/pair';
-            const gh = config.github || 'https://github.com/Dialmw/LIAM-EYES';
+            const gh = config.github      || 'https://github.com/Dialmw/LIAM-EYES';
             const ownerNum = config.owner || '254705483052';
-            const botTxt = "👁️ *LIAM EYES*\n\nYoh " + pushname + "! Looking for a bot?\n\n🔗 *Session ID:* " + ph + "\n📦 *Source:* " + gh + "\n📞 *Owner:* wa.me/" + ownerNum + "\n\n_Type *" + prefix + "menu* after connecting_\n\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️";
-            sock.sendMessage(m.chat, { text: botTxt }, { quoted: m }).catch(() => {});
+            const botTxt =
+                `👁️ *LIAM EYES Bot*\n\n` +
+                `Hey ${pushname}! 👋 Looking for a bot?\n\n` +
+                `🔗 *Get Session ID:* ${ph}\n` +
+                `📦 *Source / Download:* ${gh}\n` +
+                `📞 *Contact owner:* wa.me/${ownerNum}\n\n` +
+                `_Type *${prefix}menu* after connecting to see all commands_\n\n` +
+                `> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`;
+            try {
+                const botImg = image && image.length > 0 ? image : null;
+                if (botImg) await sock.sendMessage(m.chat, { image: botImg, caption: botTxt }, { quoted: m });
+                else await sock.sendMessage(m.chat, { text: botTxt }, { quoted: m }).catch(() => {});
+            } catch (_) {
+                await sock.sendMessage(m.chat, { text: botTxt }, { quoted: m }).catch(() => {});
+            }
+            // Don't return — allow chatbot to also respond if enabled
         }
 
         // ── Chatbot (non-command, non-numeric) ───────────────────────────────

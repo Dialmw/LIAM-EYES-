@@ -409,7 +409,7 @@ module.exports = [
         await react(sock, m, '🔄');
         await reply(`🔄 *Restarting LIAM EYES...*\n\nBe back in a moment!\n\n${sig()}`);
         await sleep(2000);
-        process.exit(0);
+        process.exit(1); // exit(1) ensures panel/pm2 always restarts
     }
 },
 
@@ -458,8 +458,8 @@ module.exports = [
                     console.error('[UPDATE] Download failed:', e2.message);
                 }
             }
-            // 3. Restart process
-            process.exit(0);
+            // 3. Restart — exit(1) forces panel/pm2 to restart the process
+            process.exit(1);
         }, 2000);
     }
 },

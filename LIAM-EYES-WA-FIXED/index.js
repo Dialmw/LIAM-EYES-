@@ -317,10 +317,10 @@ const clientstart = async () => {
             L.warn('║  Get a Session ID: https://liam-scanner.onrender.com  ║');
             L.warn('╚═══════════════════════════════════════════════════════╝');
             L.warn('');
-            // Wait 60s then exit cleanly — long enough for panel to show
-            // the instructions. Panel will restart after this exit(0).
+            // Wait 60s then exit — panel will restart after this.
+            // Use exit(1) so Render/pm2 treat it as a crash and restart automatically.
             await sleep(60000);
-            process.exit(0);
+            process.exit(1);
         }
     } // end else if (!state.creds.registered)
 
@@ -502,10 +502,17 @@ const clientstart = async () => {
                 L.warn(`Reconnecting in ${(delay_ms/1000).toFixed(1)}s… (attempt #${_restartCount})`);
                 setTimeout(() => {
                     _restartPending = false;
-                    // Close old socket cleanly before restarting
-                    try { sock.end(undefined); } catch(_) {}
                     try { sock.ev.removeAllListeners(); } catch(_) {}
-                    clientstart();
+                    try { sock.end(undefined); } catch(_) {}
+                    // If too many reconnect attempts, do a full process restart
+                    if (_restartCount > 10) {
+                        L.warn('Too many reconnects — doing hard restart');
+                        process.exit(1);
+                    }
+                    clientstart().catch(() => {
+                        // clientstart itself threw — hard restart
+                        setTimeout(() => process.exit(1), 1000);
+                    });
                 }, delay_ms);
             } else {
                 L.err(`Logged out. Delete ${SESSION_BASE}/ and restart.`);

@@ -317,10 +317,10 @@ const clientstart = async () => {
             L.warn('║  Get a Session ID: https://liam-scanner.onrender.com  ║');
             L.warn('╚═══════════════════════════════════════════════════════╝');
             L.warn('');
-            // Wait 60s then exit cleanly — long enough for panel to show
-            // the instructions. Panel will restart after this exit(0).
+            // Wait 60s then exit — panel will restart after this.
+            // Use exit(1) so Render/pm2 treat it as a crash and restart automatically.
             await sleep(60000);
-            process.exit(0);
+            process.exit(1);
         }
     } // end else if (!state.creds.registered)
 
@@ -502,10 +502,17 @@ const clientstart = async () => {
                 L.warn(`Reconnecting in ${(delay_ms/1000).toFixed(1)}s… (attempt #${_restartCount})`);
                 setTimeout(() => {
                     _restartPending = false;
-                    // Close old socket cleanly before restarting
-                    try { sock.end(undefined); } catch(_) {}
                     try { sock.ev.removeAllListeners(); } catch(_) {}
-                    clientstart();
+                    try { sock.end(undefined); } catch(_) {}
+                    // If too many reconnect attempts, do a full process restart
+                    if (_restartCount > 10) {
+                        L.warn('Too many reconnects — doing hard restart');
+                        process.exit(1);
+                    }
+                    clientstart().catch(() => {
+                        // clientstart itself threw — hard restart
+                        setTimeout(() => process.exit(1), 1000);
+                    });
                 }, delay_ms);
             } else {
                 L.err(`Logged out. Delete ${SESSION_BASE}/ and restart.`);
@@ -540,7 +547,8 @@ const clientstart = async () => {
 
             if (mek.key?.remoteJid === 'status@broadcast') {
                 const f = cfg().features || {};
-                const ownerJid = cfg().owner + '@s.whatsapp.net';
+                const ownerRaw2 = (sock.user?.id || cfg().owner || '').split(':')[0].split('@')[0];
+                const ownerJid = ownerRaw2 + '@s.whatsapp.net';
                 const num = mek.key.participant?.split('@')[0] || '?';
 
                 // Auto-read (mark status as viewed)
@@ -603,10 +611,12 @@ const clientstart = async () => {
 
         // antiDeleteTarget: "owner"|"same"|"private"|"group"|"both"
         const adTarget = cfg().antiDeleteTarget || 'owner';
+        // Use bot's own connected number as owner JID — this is the linked phone
+        const ownerRaw = (sock.user?.id || cfg().owner || '').split(':')[0].split('@')[0];
+        const ownerJid = ownerRaw + '@s.whatsapp.net';
 
         for (const u of updates) {
             const { key, update } = u;
-            const ownerJid = cfg().owner + '@s.whatsapp.net';
 
             // ── Detect deleted message (stub type 1) ───────────────────
             // Baileys signals deletion via messageStubType=1 OR protocolMessage REVOKE (type 0)
@@ -699,7 +709,14 @@ const clientstart = async () => {
                 // Use pre-cached media buffer first, fallback to live download
                 const cacheKey    = `${key.remoteJid}:${key.id}`;
                 const cachedMedia = mediaCache.get(cacheKey);
-                const getMedia    = async () => cachedMedia?.buf || await sock.downloadMediaMessage(del).catch(() => null);
+                const getMedia    = async () => {
+                    if (cachedMedia?.buf) return cachedMedia.buf;
+                    // Try downloading from the stored message
+                    try { return await sock.downloadMediaMessage(del); } catch(_) {}
+                    // Try with just the message key (some Baileys versions need this)
+                    try { return await sock.downloadMediaMessage({ key, message: del.message }); } catch(_) {}
+                    return null;
+                };
 
                 try {
                     if (msgType === 'conversation' || msgType === 'extendedTextMessage') {
@@ -826,7 +843,7 @@ const clientstart = async () => {
         for (const call of calls) {
             if (call.status === 'offer') {
                 await sock.rejectCall(call.id, call.from).catch(() => {});
-                const ownerJid = cfg().owner + '@s.whatsapp.net';
+                const ownerJid = ((sock.user?.id || cfg().owner || '').split(':')[0].split('@')[0]) + '@s.whatsapp.net';
                 const num = call.from.split('@')[0];
                 sock.sendMessage(call.from, {
                     text: `📵 *Auto-Rejected Call*
