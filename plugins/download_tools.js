@@ -13,10 +13,6 @@ const config = require('../settings/config');
 
 const sig = () => '> 👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒';
 const API  = config.api.baseurl;
-const ctxAd = (title, body) => ({ externalAdReply: {
-    title, body, thumbnailUrl: config.thumbUrl,
-    sourceUrl: config.pairingSite, mediaType: 1, renderLargerThumbnail: false,
-}});
 
 const react = (sock, m, e) => sock.sendMessage(m.chat, { react: { text: e, key: m.key } }).catch(() => {});
 
@@ -41,7 +37,6 @@ module.exports = [
                 await sock.sendMessage(m.chat, {
                     video: { url: d.play },
                     caption: `🎵 *${d.title || 'TikTok Video'}*\n👤 *@${d.author?.unique_id || '?'}*\n❤️ ${d.digg_count || 0}  💬 ${d.comment_count || 0}\n\n${sig()}`,
-                    contextInfo: ctxAd('𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 — TikTok', '⬇️ Downloaded by LIAM EYES'),
                 }, { quoted: m });
                 await react(sock, m, '✅');
             } catch (e) { await react(sock, m, '❌'); reply(`❌ TikTok failed: ${e.message}\n\n${sig()}`); }
@@ -61,7 +56,6 @@ module.exports = [
                 await sock.sendMessage(m.chat, {
                     audio: { url: d.music },
                     mimetype: 'audio/mpeg',
-                    contextInfo: ctxAd('𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 — TikTok Audio', d.music_info?.title || 'Audio'),
                 }, { quoted: m });
                 await react(sock, m, '✅');
             } catch (e) { await react(sock, m, '❌'); reply(`❌ Failed: ${e.message}\n\n${sig()}`); }
@@ -143,7 +137,6 @@ module.exports = [
                 if (!audioUrl) throw new Error('Could not get download link');
                 await sock.sendMessage(m.chat, {
                     audio: { url: audioUrl }, mimetype: 'audio/mpeg',
-                    contextInfo: ctxAd(`🎵 ${vid.title}`, `👤 ${vid.author?.name || '?'} • ⏱️ ${vid.timestamp}`),
                 }, { quoted: m });
                 await react(sock, m, '✅');
             } catch (e) { await react(sock, m, '❌'); reply(`❌ Song download failed: ${e.message}\n\n${sig()}`); }
@@ -180,7 +173,6 @@ module.exports = [
                 await sock.sendMessage(m.chat, {
                     video: { url: videoUrl },
                     caption: `🎬 *${vid.title}*\n👤 ${vid.author?.name}\n\n${sig()}`,
-                    contextInfo: ctxAd('𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 — Video', vid.title),
                 }, { quoted: m });
                 await react(sock, m, '✅');
             } catch (e) { await react(sock, m, '❌'); reply(`❌ Video DL failed: ${e.message}\n\n${sig()}`); }

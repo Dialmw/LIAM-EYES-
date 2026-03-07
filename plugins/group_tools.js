@@ -108,8 +108,7 @@ module.exports = [
             const code = await sock.groupInviteCode(m.chat);
             const link = `https://chat.whatsapp.com/${code}`;
             await sock.sendMessage(m.chat, {
-                text: `🔗 *${ctx.groupName}*\n\n${link}\n\n${sig()}`,
-                contextInfo: { externalAdReply: { title: '🔗 Group Invite', body: ctx.groupName, thumbnailUrl: config.thumbUrl, sourceUrl: link, mediaType: 1 } }
+                text: `🔗 *${ctx.groupName}*\n\n${link}\n\n${sig()}`
             }, { quoted: m });
         }
     },
@@ -154,8 +153,7 @@ module.exports = [
             const mentions = ctx.participants.map(p => p.id);
             await sock.sendMessage(m.chat, {
                 text: `📢 *${text}*\n\n${mentions.map(j => `@${j.split('@')[0]}`).join(' ')}`,
-                mentions,
-                contextInfo: { externalAdReply: { title: 'LIAM EYES — Tag', body: ctx.groupName, thumbnailUrl: config.thumbUrl, sourceUrl: config.pairingSite } }
+                mentions
             }, { quoted: m });
         }
     },

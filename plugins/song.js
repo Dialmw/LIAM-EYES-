@@ -14,8 +14,7 @@ module.exports = {
             if (!data?.audio) return reply('🚫 Download failed. Try again!');
             await sock.sendMessage(m.chat, {
                 audio: { url: data.audio }, mimetype: 'audio/mpeg',
-                fileName: `${(data.title || v.title).substring(0, 50)}.mp3`,
-                contextInfo: { externalAdReply: { title: '🎵 LIAM EYES Song', body: v.title, thumbnailUrl: v.thumbnail, sourceUrl: 'https://whatsapp.com/channel/0029VbBeZTc1t90aZjks9v2S', mediaType: 1 }}
+                fileName: `${(data.title || v.title).substring(0, 50)}.mp3`
             }, { quoted: m });
             await sock.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
         } catch (e) { reply('💥 Error: ' + e.message); }

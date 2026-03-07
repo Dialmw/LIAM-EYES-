@@ -26,8 +26,7 @@ module.exports = [
         const {data} = await axios.post('https://inferenceengine.vyro.ai/enhance',form,
           {headers:{...form.getHeaders(),'User-Agent':'okhttp/4.9.3'},timeout:30000,responseType:'arraybuffer'});
         await sock.sendMessage(m.chat,{
-          image:Buffer.from(data),caption:`✨ *Image Enhanced (Remini)*\n\n${sig()}`,
-          contextInfo:{externalAdReply:{title:'LIAM EYES — Remini',body:'✨ AI Enhanced',thumbnailUrl:config.thumbUrl,sourceUrl:config.pairingSite}}
+          image:Buffer.from(data),caption:`✨ *Image Enhanced (Remini)*\n\n${sig()}`
         },{quoted:m});
         await react(sock,m,'✅');
       } catch(e){await react(sock,m,'❌');reply(`❌ Enhance failed: ${e.message}\n\n${sig()}`);}
@@ -47,8 +46,7 @@ module.exports = [
         }
         for(const r of results){
           await sock.sendMessage(m.chat,{
-            image:{url:r.url},caption:`🖼️ *Wallpaper: ${r.label}*\n📐 1920×1080\n\n${sig()}`,
-            contextInfo:{externalAdReply:{title:'LIAM EYES — Wallpaper',body:r.label,thumbnailUrl:config.thumbUrl,sourceUrl:config.pairingSite}}
+            image:{url:r.url},caption:`🖼️ *Wallpaper: ${r.label}*\n📐 1920×1080\n\n${sig()}`
           },{quoted:m});
           await new Promise(r2=>setTimeout(r2,500));
         }

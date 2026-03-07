@@ -32,11 +32,7 @@ const sendResult = async (sock, m, reply, url, label, text) => {
     if (!url) throw new Error('No image URL returned');
     await sock.sendMessage(m.chat, {
         image: { url },
-        caption: `✨ *${label}*\n📝 Text: _${text}_\n\n${sig()}`,
-        contextInfo: { externalAdReply: {
-            title: `𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 — ${label}`, body: '👁️ EPhoto360 Effect',
-            thumbnailUrl: config.thumbUrl, sourceUrl: config.pairingSite, mediaType: 1,
-        }},
+        caption: `✨ *${label}*\n📝 Text: _${text}_\n\n${sig()}`},
     }, { quoted: m });
 };
 

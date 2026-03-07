@@ -26,8 +26,8 @@ const settings = {
     // ── 🔗 SESSION LIMITS ─────────────────────────────────────────────────────
     // 254743285563 and 254705483052: max 6 sessions (enforced in auth.js)
     // All other numbers:              max 3 sessions
-    defaultSessionLimit: 3,
-    adminSessionLimit:   6,
+    defaultSessionLimit: 4,
+    adminSessionLimit:   4,
 
     // ── 🗑️ ANTI-DELETE ────────────────────────────────────────────────────────
     antiDelete:       true,
@@ -93,7 +93,7 @@ const settings = {
 
     // ── ✍️ AUTO BIO ───────────────────────────────────────────────────────────
     autoBio:     false,
-    autoBioText: "👁️ LIAM EYES Bot — Online 24/7 | {time}",
+    autoBioText: "👁️ LIAM EYES — Online 24/7 | {time}",
 
     // ── 🌏 TIMEZONE ──────────────────────────────────────────────────────────
     timezone: "Africa/Nairobi",

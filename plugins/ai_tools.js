@@ -181,11 +181,7 @@ module.exports = [
                 await sleep(2500);
                 await sock.sendMessage(m.chat, {
                     image: { url },
-                    caption: `🎨 *AI Image*\n🖼️ *Prompt:* ${text}\n\n${sig()}`,
-                    contextInfo: { externalAdReply: {
-                        title: '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 — AI Art', body: '👁️ Generated with AI',
-                        thumbnailUrl: config.thumbUrl, sourceUrl: config.pairingSite, mediaType: 1,
-                    }}
+                    caption: `🎨 *AI Image*\n🖼️ *Prompt:* ${text}\n\n${sig()}`
                 }, { quoted: m });
                 await sock.sendMessage(m.chat, { react: { text: '✅', key: m.key } }).catch(() => {});
             } catch (e) { reply(`❌ Generation failed: ${e.message}\n\n${sig()}`); }

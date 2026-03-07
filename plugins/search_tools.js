@@ -108,12 +108,43 @@ module.exports = [
       if(!text) return reply(`❓ Usage: *.yts <search term>*\n\n${sig()}`);
       await react(sock,m,'🔍');
       try {
-        const ytsr = require('yt-search');
-        const res  = await ytsr(text);
-        const top5 = res.videos.slice(0,5);
-        if(!top5.length) throw new Error('No results');
-        const list = top5.map((v,i)=>`*${i+1}.* ${v.title}\n   ⏱️ ${v.timestamp} • 👁️ ${v.views?.toLocaleString()||'?'}\n   🔗 ${v.url}`).join('\n\n');
-        reply(`🔍 *YouTube Search: ${text}*\n━━━━━━━━━━━━━━━━\n${list}\n\n${sig()}`);
+        // Use Invidious API — fast, no key needed, multiple fallback instances
+        const instances = [
+          'https://invidious.snopyta.org',
+          'https://yewtu.be',
+          'https://vid.puffyan.us',
+          'https://invidious.kavin.rocks'
+        ];
+        let results = null;
+        for (const inst of instances) {
+          try {
+            const {data} = await axios.get(
+              `${inst}/api/v1/search?q=${encodeURIComponent(text)}&type=video&fields=title,videoId,author,lengthSeconds,viewCount`,
+              { timeout: 8000 }
+            );
+            if (Array.isArray(data) && data.length > 0) { results = data.slice(0,5); break; }
+          } catch(_) {}
+        }
+        if (!results) {
+          // Final fallback to yt-search
+          const ytsr = require('yt-search');
+          const res = await ytsr(text, {});
+          results = res.videos.slice(0,5).map(v => ({
+            title: v.title, videoId: v.videoId || v.url.split('v=')[1],
+            author: v.author?.name || '?',
+            lengthSeconds: 0, viewCount: v.views || 0, _ytsr: v
+          }));
+        }
+        if (!results?.length) throw new Error('No results');
+        const fmt = s => s >= 3600 ? `${~~(s/3600)}h${~~(s%3600/60)}m` : s >= 60 ? `${~~(s/60)}m${s%60}s` : s + 's';
+        const list = results.map((v,i) => {
+          const vid   = v.videoId || (v._ytsr?.url?.split('v=')[1]);
+          const url   = `https://youtu.be/${vid}`;
+          const dur   = v.lengthSeconds ? fmt(v.lengthSeconds) : (v._ytsr?.timestamp || '?');
+          const views = (v.viewCount||v._ytsr?.views||0).toLocaleString();
+          return `*${i+1}.* ${v.title}\n   ⏱️ ${dur} • 👁️ ${views}\n   🔗 ${url}`;
+        }).join('\n\n');
+        reply(`🔍 *YouTube: ${text}*\n━━━━━━━━━━━━━━━━\n${list}\n\n${sig()}`);
         await react(sock,m,'✅');
       } catch(e){await react(sock,m,'❌');reply(`❌ YT search failed: ${e.message}\n\n${sig()}`);}
     }

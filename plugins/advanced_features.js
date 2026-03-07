@@ -12,14 +12,7 @@ const os     = require('os');
 
 // ── Shared reply card helper ─────────────────────────────────────
 const card = (sock, m, text) => sock.sendMessage(m.chat, {
-    text,
-    contextInfo: { externalAdReply: {
-        title: '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒',
-        body: '👁️ Your Eyes in the WhatsApp World',
-        thumbnailUrl: config.thumbUrl,
-        sourceUrl: 'https://whatsapp.com/channel/0029VbBeZTc1t90aZjks9v2S',
-        renderLargerThumbnail: false,
-    }}
+    text
 }, { quoted: m });
 
 module.exports = [

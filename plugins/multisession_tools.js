@@ -148,7 +148,7 @@ module.exports = [
     execute: async (sock, m, ctx) => {
         if (!OW(ctx)) return ctx.reply(config.message.owner);
         const n = parseInt(ctx.args[0]);
-        if (!n || n < 1 || n > 10) return ctx.reply(`❓ Usage: *.setlimit <1-10>*\nCurrent: *${config.sessionLimits?.default || 3}*\n\n${sig()}`);
+        if (!n || n < 1 || n > 4) return ctx.reply(`❓ Usage: *.setlimit <1-4>*\nCurrent: *${config.sessionLimits?.default || 3}*\n\n${sig()}`);
         if (!config.sessionLimits) config.sessionLimits = {};
         config.sessionLimits.default = n;
         await react(sock, m, '✅');

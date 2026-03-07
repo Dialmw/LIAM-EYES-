@@ -18,8 +18,7 @@ module.exports = {
 👑 *Creator:* Liam
 ━━━━━━━━━━━━━━━━━━━━━
 📡 https://whatsapp.com/channel/0029VbBeZTc1t90aZjks9v2S`;
-        await sock.sendMessage(m.chat, { image: { url: config.thumbUrl }, caption: msg,
-            contextInfo: { externalAdReply: { title: '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒', body: 'Alpha by Liam', thumbnailUrl: config.thumbUrl, sourceUrl: 'https://whatsapp.com/channel/0029VbBeZTc1t90aZjks9v2S', mediaType: 1 }}
+        await sock.sendMessage(m.chat, { image: { url: config.thumbUrl }, caption: msg
         }, { quoted: m });
         await sock.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     }

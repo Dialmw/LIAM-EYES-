@@ -62,12 +62,7 @@ module.exports = [
             await ffmpegAudio(tmp, out);
             const audio = fs.readFileSync(out);
             await sock.sendMessage(m.chat, {
-                audio, mimetype: 'audio/mpeg', fileName: 'audio.mp3',
-                contextInfo: { externalAdReply: {
-                    title: '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 — Audio Extracted',
-                    body: '🎵 Converted from video',
-                    thumbnailUrl: config.thumbUrl, sourceUrl: config.pairingSite, mediaType: 1,
-                }}
+                audio, mimetype: 'audio/mpeg', fileName: 'audio.mp3'
             }, { quoted: m });
             await react(sock, m, '✅');
         } catch (e) {
@@ -109,11 +104,7 @@ module.exports = [
             }
             const vid = fs.readFileSync(out);
             await sock.sendMessage(m.chat, {
-                video: vid, caption: `🎬 *Converted!*\n\n${sig()}`,
-                contextInfo: { externalAdReply: {
-                    title: '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 — Video', body: '🎬 Converted',
-                    thumbnailUrl: config.thumbUrl, sourceUrl: config.pairingSite, mediaType: 1,
-                }}
+                video: vid, caption: `🎬 *Converted!*\n\n${sig()}`
             }, { quoted: m });
             await react(sock, m, '✅');
         } catch (e) {

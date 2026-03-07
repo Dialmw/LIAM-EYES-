@@ -136,12 +136,7 @@ module.exports = [
             await sock.sendMessage(m.chat, { react: { text: '🔑', key: m.key } });
 
             const codeMsg = await sock.sendMessage(m.chat, {
-                text: `*${code}*`,
-                contextInfo: { externalAdReply: {
-                    title: '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 — Pairing Code',
-                    body: `📱 +${num}  •  ⏱️ Valid 60 seconds`,
-                    thumbnailUrl: config.thumbUrl, sourceUrl: config.pairingSite, mediaType: 1,
-                }}
+                text: `*${code}*`}
             }, { quoted: m });
 
             await sock.sendMessage(m.chat, {

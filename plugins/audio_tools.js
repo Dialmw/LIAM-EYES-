@@ -33,11 +33,7 @@ const getAudio = async (sock, m) => {
 
 const sendAudio = async (sock, m, buf, caption) => {
     await sock.sendMessage(m.chat, {
-        audio: buf, mimetype: 'audio/mpeg',
-        contextInfo: { externalAdReply: {
-            title: '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 — Audio', body: caption,
-            thumbnailUrl: config.thumbUrl, sourceUrl: config.pairingSite,
-        }}
+        audio: buf, mimetype: 'audio/mpeg'
     }, { quoted: m });
 };
 
