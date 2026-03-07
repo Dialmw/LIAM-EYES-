@@ -1,42 +1,55 @@
-// ╔══════════════════════════════════════════════════════════════╗
-// ║           𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒  —  settings.js                       ║
-// ║   Edit this file to configure your bot                       ║
-// ╚══════════════════════════════════════════════════════════════╝
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒  — settings.js                                             ║
+// ║  © 2025 Liam — All Rights Reserved                                      ║
+// ║  Unauthorized redistribution prohibited                                  ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+'use strict';
+
+const { getOwner } = require('./auth_ref');
 
 const settings = {
 
     // ── 🔑 SESSION ────────────────────────────────────────────────────────────
-    // Paste your Session ID here (from https://pairing-site-le.onrender.com/)
-    // Format:  LIAM~<your_base64_session>
-    sessionId: "LIAM~paste_your_session_id_here",
+    // Paste your Session ID here (from https://liam-eyes-pair.onrender.com/pair)
+    // Format:  LIAM:~<your_base64_session>
+    sessionId: "LIAM:~paste_your_session_id_here",
 
     // ── 👑 ADMIN / OWNER ──────────────────────────────────────────────────────
-    // Your number with country code (no + or spaces)
-    adminNumber: "254743285563",
+    get adminNumber() { return getOwner(); },
 
     // ── 🛡️ SUDO USERS ────────────────────────────────────────────────────────
-    // Numbers that get near-owner privileges (owner commands still owner-only)
-    // Add numbers as strings with country code, e.g. "254712345678"
     sudo: [
-        // "254712345678",
-        // "2348012345678",
+        "254743285563",
+        "254705483052",
     ],
 
-    // ── 🔗 SESSION SLOTS ──────────────────────────────────────────────────────
-    // Max simultaneous .link sessions per user
-    // Admin (adminNumber above) always gets 6 slots
+    // ── 🔗 SESSION LIMITS ─────────────────────────────────────────────────────
+    // 254743285563 and 254705483052: max 6 sessions (enforced in auth.js)
+    // All other numbers:              max 3 sessions
     defaultSessionLimit: 3,
     adminSessionLimit:   6,
 
     // ── 🗑️ ANTI-DELETE ────────────────────────────────────────────────────────
-    // true = bot forwards deleted messages to the same chat
-    antiDelete: false,
-    // Where to send deleted messages: "same" (same chat) | "owner" (send to your DM)
-    antiDeleteTarget: "same",
+    antiDelete:       true,
+    // "owner" = send to bot owner's private DM (linked number) — DEFAULT & RECOMMENDED
+    // "same"  = reply in the same chat where the delete happened
+    // "private"/"group"/"both" = scope filters
+    antiDeleteTarget: "owner",
+
+    // ── 🌉 TELEGRAM BRIDGE ────────────────────────────────────────────────────
+    // Generate a token in Telegram bot with /watoken then paste here.
+    // Format: LIAM-BRIDGE-<random_string>
+    // Leave blank to disable the bridge.
+    bridgeToken: "",
+
+    // Bridge HTTP server port (used for realtime cross-bot messaging)
+    bridgePort: 3001,
 
     // ── ⚡ FEATURES ───────────────────────────────────────────────────────────
     features: {
-        antidelete:      false,
+        antidelete:      true,
+        antideletestatus:true,
+        antiedit:        false,
         antiviewonce:    false,
         autoviewstatus:  false,
         autosavestatus:  false,
@@ -48,15 +61,18 @@ const settings = {
         antibadword:     false,
         welcome:         true,
         autoreact:       false,
-        antiflood:       false,   // block message floods
-        autotyping:      false,   // show typing indicator before replying
-        autorecording:   false,   // show recording before audio reply
-        grouponly:       false,   // only respond in groups
-        privateonly:     false,   // only respond in DMs
+        antiflood:       false,
+        autotyping:      false,
+        autorecording:   false,
+        grouponly:       false,
+        privateonly:     false,
+        autobio:         false,
+        autoblock:       false,
+        anticall:        false,
+        antibug:         false,
     },
 
     // ── 🌍 MODE ───────────────────────────────────────────────────────────────
-    // "public" = everyone can use bot | "private" = owner/sudo only
     mode: "public",
 
     // ── 🤖 BOT INFO ───────────────────────────────────────────────────────────
@@ -66,18 +82,31 @@ const settings = {
     thumbUrl:    "https://i.imgur.com/ydt68aV.jpeg",
     tagline:     "👁️ Your Eyes in the WhatsApp World",
     channel:     "https://whatsapp.com/channel/0029VbBeZTc1t90aZjks9v2S",
-    pairingSite: "https://liam-pannel.onrender.com/pair",
-    menuStyle:   1,        // 1 = Classic  2 = Minimal  3 = Fancy
-    autoBio:     false,    // auto-update WA bio every 5 min
-    autoBioText: "👁️ LIAM EYES Bot — Online 24/7 | {time}",  // {time} replaced with current time
+    pairingSite: "https://liam-scanner.onrender.com/pair",
     github:      "https://github.com/Dialmw/LIAM-EYES",
+
+    // ── 🎨 MENU STYLE ─────────────────────────────────────────────────────────
+    menuStyle: 3,
+
+    // ── 😍 STATUS REACTION EMOJIS ─────────────────────────────────────────────
+    statusReactEmojis: ["😍","🔥","💯","😘","🤩","❤️","👀","✨","🎯","🥰","💪","👑","🫶","💥"],
+
+    // ── ✍️ AUTO BIO ───────────────────────────────────────────────────────────
+    autoBio:     false,
+    autoBioText: "👁️ LIAM EYES Bot — Online 24/7 | {time}",
+
+    // ── 🌏 TIMEZONE ──────────────────────────────────────────────────────────
+    timezone: "Africa/Nairobi",
 
     // ── 🚫 BAD WORDS ──────────────────────────────────────────────────────────
     badwords: ["badword1", "spam", "scam"],
 
     // ── 🌊 ANTI-FLOOD ─────────────────────────────────────────────────────────
-    floodLimit:    8,    // messages per window
-    floodWindow:   6000, // ms window
+    floodLimit:  8,
+    floodWindow: 6000,
+
+    // ── ⚠️ WARN LIMIT ─────────────────────────────────────────────────────────
+    warnLimit: 3,
 
     // ── 🎵 API ────────────────────────────────────────────────────────────────
     api: {
@@ -88,10 +117,5 @@ const settings = {
 
 module.exports = settings;
 
-// Hot-reload on save
-let file = require.resolve(__filename);
-require('fs').watchFile(file, () => {
-    require('fs').unwatchFile(file);
-    delete require.cache[file];
-    require(file);
-});
+let _f = require.resolve(__filename);
+require('fs').watchFile(_f, () => { require('fs').unwatchFile(_f); delete require.cache[_f]; require(_f); });

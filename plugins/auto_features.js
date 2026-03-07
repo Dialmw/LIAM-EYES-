@@ -1,112 +1,70 @@
-// ─────────────────────────────────────────────────────────────────
-//  auto_features.js — every toggle supports:
-//    .command on      → enable
-//    .command off     → disable
-//    .command         → flip current state
-//  All owner-only. Shows a clean ON/OFF card in reply.
-// ─────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// ║  👁️  LIAM EYES WhatsApp Bot                                            ║
+// ║  © 2025 Liam — All Rights Reserved                                     ║
+// ║  Unauthorized redistribution, modification, or resale is prohibited.   ║
+// ║  GitHub: https://github.com/Dialmw/LIAM-EYES                          ║
+// ════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
+//  LIAM EYES — AUTO FEATURES  (18 toggle commands)
+//  alwaysonline, antibug, anticall, antidelete, antideletestatus, antiedit,
+//  autobio, autoblock, autoreact, autoreactstatus, autoread, autorecord,
+//  autorecordtyping, autotype, autoviewstatus, chatbot, antiflood, antiviewonce
+//
+//  Usage: .command on | .command off | .command (flip)
+//  All owner-only.
+// ══════════════════════════════════════════════════════════════════════════════
+'use strict';
 const config = require('../settings/config');
 
-// ── Shared toggle engine ─────────────────────────────────────────
-const toggle = async (feat, label, emoji, sock, m, ctx) => {
-    const { args, reply } = ctx;
+const sig = () => '> 👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒';
+
+// Shared toggle engine
+const tog = async (feat, label, emoji, sock, m, ctx) => {
+    if (!ctx.isCreator) return ctx.reply(config.message.owner);
     if (!config.features) config.features = {};
 
-    const arg = (args[0] || '').toLowerCase().trim();
+    const arg = (ctx.args[0] || '').toLowerCase();
     let on;
     if      (arg === 'on')  on = true;
     else if (arg === 'off') on = false;
-    else                    on = !config.features[feat];   // flip
+    else                    on = !config.features[feat];
 
     config.features[feat] = on;
 
-    await sock.sendMessage(m.chat, {
-        react: { text: on ? emoji : '❌', key: m.key }
-    }).catch(() => {});
-
-    await reply(
+    await sock.sendMessage(m.chat, { react: { text: on ? emoji : '❌', key: m.key } }).catch(() => {});
+    ctx.reply(
         `${on ? emoji : '❌'} *${label}*\n\n` +
-        `${on
+        (on
             ? '╔═══════════════════╗\n║  ✅  E N A B L E D  ║\n╚═══════════════════╝'
-            : '╔════════════════════╗\n║  ❌  D I S A B L E D  ║\n╚════════════════════╝'
-        }\n\n` +
-        `> 💡 *.${feat} on* · *.${feat} off* · *.${feat}* (flip)\n\n` +
-        `> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`
+            : '╔══════════════════════╗\n║  ❌  D I S A B L E D  ║\n╚══════════════════════╝'
+        ) +
+        `\n\n${sig()}`
     );
 };
 
-// ── Guard helper — owner only ────────────────────────────────────
-const ow = fn => async (s, m, c) => {
-    if (!c.isCreator) return c.reply(require('../settings/config').message.owner);
-    return fn(s, m, c);
-};
+// Helper to build a toggle command object
+const mk = (cmd, feat, label, emoji) => ({
+    command: cmd, category: 'settings', owner: true,
+    execute: (s, m, ctx) => tog(feat, label, emoji, s, m, ctx),
+});
 
 module.exports = [
-
-    // ── 🛠️ TOOLS ─────────────────────────────────────────────────
-    {
-        command: 'autoread', category: 'tools', owner: true,
-        execute: ow((s,m,c) => toggle('autoread', 'Auto Read', '📖', s, m, c))
-    },
-    {
-        command: 'autoreact', category: 'tools', owner: true,
-        execute: ow((s,m,c) => toggle('autoreact', 'Auto React', '⚡', s, m, c))
-    },
-    {
-        command: 'autotyping', category: 'tools', owner: true,
-        execute: ow((s,m,c) => toggle('autotyping', 'Auto Typing', '⌨️', s, m, c))
-    },
-    {
-        command: 'autorecording', category: 'tools', owner: true,
-        execute: ow((s,m,c) => toggle('autorecording', 'Auto Recording', '🎤', s, m, c))
-    },
-    {
-        command: 'alwaysonline', category: 'tools', owner: true,
-        execute: ow((s,m,c) => toggle('alwaysonline', 'Always Online', '🟢', s, m, c))
-    },
-    {
-        command: 'antidelete', category: 'tools', owner: true,
-        execute: ow((s,m,c) => toggle('antidelete', 'Anti Delete', '🗑️', s, m, c))
-    },
-    {
-        command: 'antiviewonce', category: 'tools', owner: true,
-        execute: ow((s,m,c) => toggle('antiviewonce', 'Anti View-Once', '👁️', s, m, c))
-    },
-    {
-        command: 'autoviewstatus', category: 'tools', owner: true,
-        execute: ow((s,m,c) => toggle('autoviewstatus', 'Auto View Status', '👁️', s, m, c))
-    },
-    {
-        command: 'autoreactstatus', category: 'tools', owner: true,
-        execute: ow((s,m,c) => toggle('autoreactstatus', 'Auto React Status', '❤️', s, m, c))
-    },
-    {
-        command: 'autosavestatus', category: 'tools', owner: true,
-        execute: ow((s,m,c) => toggle('autosavestatus', 'Auto Save Status', '💾', s, m, c))
-    },
-
-    // ── 🤖 AI ────────────────────────────────────────────────────
-    {
-        command: 'chatbot', category: 'ai', owner: true,
-        execute: ow((s,m,c) => toggle('chatbot', 'AI Chatbot', '🤖', s, m, c))
-    },
-
-    // ── 👥 GROUP ─────────────────────────────────────────────────
-    {
-        command: 'antilink', category: 'group', owner: true,
-        execute: ow((s,m,c) => toggle('antilink', 'Anti Link', '🔗', s, m, c))
-    },
-    {
-        command: 'antibadword', category: 'group', owner: true,
-        execute: ow((s,m,c) => toggle('antibadword', 'Anti Bad Word', '🤬', s, m, c))
-    },
-    {
-        command: 'welcome', category: 'group', owner: true,
-        execute: ow((s,m,c) => toggle('welcome', 'Welcome Message', '👋', s, m, c))
-    },
-    {
-        command: 'antiflood', category: 'group', owner: true,
-        execute: ow((s,m,c) => toggle('antiflood', 'Anti Flood', '🌊', s, m, c))
-    },
-
+    mk('alwaysonline',     'alwaysonline',    'Always Online',           '🟢'),
+    mk('antibug',          'antibug',         'Anti Bug Protection',     '🛡️'),
+    mk('anticall',         'anticall',        'Anti Call (Reject Calls)','📵'),
+    mk('antidelete',       'antidelete',      'Anti Delete',             '🗑️'),
+    mk('antideletestatus', 'antideletestatus','Anti Delete Status',      '📸'),
+    mk('antiedit',         'antiedit',        'Anti Edit Logger',        '✏️'),
+    mk('autobio',          'autobio',         'Auto Bio Update',         '📝'),
+    mk('autoblock',        'autoblock',       'Auto Block Non-Contacts', '🚫'),
+    mk('antiflood',        'antiflood',       'Anti Flood',              '🌊'),
+    mk('antiviewonce',     'antiviewonce',    'Anti View Once',          '🔓'),
+    mk('autoreact',        'autoreact',       'Auto React',              '❤️'),
+    mk('autoreactstatus',  'autoreactstatus', 'Auto React to Status',    '😍'),
+    mk('autoread',         'autoread',        'Auto Read Messages',      '👁️'),
+    mk('autorecord',       'autorecording',   'Auto Recording',          '🎙️'),
+    mk('autorecordtyping', 'autorecording',   'Auto Record + Typing',    '🎙️'),
+    mk('autotype',         'autotyping',      'Auto Typing Indicator',   '⌨️'),
+    mk('autoviewstatus',   'autoviewstatus',  'Auto View Status',        '👀'),
+    mk('chatbot',          'chatbot',         'AI Chatbot',              '🤖'),
 ];

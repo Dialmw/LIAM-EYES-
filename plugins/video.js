@@ -13,8 +13,7 @@ module.exports = {
             const { data } = await axios.get(`https://yt-dl.officialhectormanuel.workers.dev/?url=${encodeURIComponent(v.url)}`);
             if (!data?.video) return reply('🚫 Video download unavailable. Try .play for audio!');
             await sock.sendMessage(m.chat, {
-                video: { url: data.video }, caption: `🎬 *${data.title || v.title}*\n\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 Bot`,
-                contextInfo: { externalAdReply: { title: '🎬 LIAM EYES Video', body: v.title, thumbnailUrl: v.thumbnail, sourceUrl: 'https://whatsapp.com/channel/0029VbBeZTc1t90aZjks9v2S', mediaType: 1 }}
+                video: { url: data.video }, caption: `🎬 *${data.title || v.title}*\n\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 Bot`
             }, { quoted: m });
             await sock.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
         } catch (e) { reply('💥 Error: ' + e.message); }
