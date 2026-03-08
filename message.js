@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════════════════
-// ║  👁️  LIAM EYES WhatsApp Bot — message.js  v2 FIXED                    ║
+// ║  👁️  LIAM EYES WhatsApp Bot — message.js                              ║
 // ║  © 2025 Liam — All Rights Reserved                                     ║
 // ════════════════════════════════════════════════════════════════════════════
 'use strict';
@@ -12,9 +12,11 @@ const axios  = require('axios');
 const os     = require('os');
 const moment = require('moment-timezone');
 
-// Menu thumbnail ONLY for .menu command
+// ── Menu thumbnail ONLY for .menu — no image on regular replies ──────────────
 const menuImage = (() => {
-    try { return fs.readFileSync('./thumbnail/logo.jpg'); } catch { return null; }
+    try { return fs.readFileSync('./thumbnail/logo.jpg'); } catch {
+        try { return fs.readFileSync('./thumbnail/image.jpg'); } catch { return null; }
+    }
 })();
 
 let _jidNorm;
@@ -33,35 +35,35 @@ const script = t => t.split('').map(c => _map([
     ['abcdefghijklmnopqrstuvwxyz','𝓪𝓫𝓬𝓭𝓮𝓯𝓰𝓱𝓲𝓳𝓴𝓵𝓶𝓷𝓸𝓹𝓺𝓻𝓼𝓽𝓾𝓿𝔀𝔁𝔂𝔃'],
 ], c)).join('');
 
-const STAR = '★★★★★★★★★★★★★';
+const STAR  = '★★★★★★★★★';
 const BOX_T = `╔${STAR}╗`;
 const BOX_B = `╚${STAR}╝`;
-const sBox = (...lines) => [BOX_T, ...lines, BOX_B].join('\n');
-const tz = () => config.settings?.timezone || 'Africa/Nairobi';
+const sBox  = (...lines) => [BOX_T, ...lines, BOX_B].join('\n');
+const tz    = () => config.settings?.timezone || 'Africa/Nairobi';
 const fmt_tz = () => moment().tz(tz()).format('z');
 
-// HOST DETECTION
+// ── Host Detection ────────────────────────────────────────────────────────────
 const detectHost = () => {
-    if (process.env.HEROKU_APP_NAME || process.env.DYNO)                       return '🟣 Heroku';
-    if (process.env.RENDER || process.env.RENDER_SERVICE_NAME)                  return '🟦 Render';
-    if (process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID)      return '🚂 Railway';
-    if (process.env.CYCLIC_URL)                                                  return '🟢 Cyclic';
+    if (process.env.HEROKU_APP_NAME || process.env.DYNO)                          return '🟣 Heroku';
+    if (process.env.RENDER || process.env.RENDER_SERVICE_NAME)                     return '🟦 Render';
+    if (process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID)         return '🚂 Railway';
+    if (process.env.CYCLIC_URL)                                                    return '🟢 Cyclic';
     if (process.env.TERMUX_VERSION || (process.env.PREFIX||'').includes('termux')) return '📱 Termux';
-    if (process.env.KOYEB_INSTANCE_ID)                                           return '🟠 Koyeb';
-    if (process.env.FLY_APP_NAME)                                                return '🪁 Fly.io';
-    if (process.env.VERCEL)                                                      return '▲ Vercel';
-    if (process.env.AWS_REGION)                                                  return '🟡 AWS';
+    if (process.env.KOYEB_INSTANCE_ID)                                             return '🟠 Koyeb';
+    if (process.env.FLY_APP_NAME)                                                  return '🪁 Fly.io';
+    if (process.env.VERCEL)                                                        return '▲ Vercel';
+    if (process.env.AWS_REGION)                                                    return '🟡 AWS';
     return '🖥️ VPS/Local';
 };
 global._hostName = detectHost();
 
-// BOT STATE
+// ── Bot State ─────────────────────────────────────────────────────────────────
 let BOT_PAUSED = false;
 global._botPaused = () => BOT_PAUSED;
 global._botKill   = () => { BOT_PAUSED = true; };
 global._botWake   = () => { BOT_PAUSED = false; };
 
-// PLUGIN LOADER
+// ── Plugin Loader ─────────────────────────────────────────────────────────────
 class PluginLoader {
     constructor() {
         this.plugins    = new Map();
@@ -144,7 +146,7 @@ class PluginLoader {
         const cmds = this.getCmds(catKey);
         const c = this.catDef.find(x => x.key === catKey) || { label: catKey.toUpperCase(), emoji: '📦' };
         if (!cmds.length) return null;
-        return [BOX_T, `  ${c.emoji} *${c.label} MENU*`, BOX_B, ...cmds.map(cmd => `│ ${prefix}${cmd}`), '└─────────────────────'].join('\n');
+        return [`*${c.emoji} ${c.label}*`, ...cmds.map(cmd => `  ${prefix}${cmd}`), ''].join('\n');
     }
     style2(prefix) {
         const lines = [];
@@ -161,7 +163,7 @@ class PluginLoader {
             const cmds = this.getCmds(c.key); if (!cmds.length) continue;
             lines.push(`\n╭──『 *${c.emoji} ${c.label}* 』`);
             cmds.forEach(cmd => lines.push(`│  ✦ ${prefix}${cmd}`));
-            lines.push('╰' + '─'.repeat(28));
+            lines.push('╰' + '─'.repeat(22));
         }
         return lines.join('\n');
     }
@@ -177,10 +179,15 @@ class PluginLoader {
 }
 const PL = new PluginLoader();
 
-// CHATBOT
+// ── Chatbot ───────────────────────────────────────────────────────────────────
 const chatHistory = new Map();
 global._chatHistory = chatHistory;
-const SYSTEM_PROMPT = `You are LIAM EYES 👁️ — a witty WhatsApp AI by Liam. Reply in same language as user. Be natural, short, funny. Never mention OpenAI/Claude/ChatGPT/Anthropic.`;
+const SYSTEM_PROMPT = `You are LIAM EYES 👁️ — a witty WhatsApp AI by Liam.
+RULES:
+- Reply in SAME LANGUAGE as the user. Swahili→Swahili. English→English.
+- Match their VIBE: chill→relaxed, excited→hype, sad→warm, playful→playful.
+- SHORT for casual (1-3 sentences). Detailed only when actually helping.
+- NEVER mention OpenAI, ChatGPT, Claude, or Anthropic. You are LIAM EYES by Liam.`;
 const getChatHist = jid => {
     if (!chatHistory.has(jid)) chatHistory.set(jid, []);
     const h = chatHistory.get(jid);
@@ -204,25 +211,26 @@ const chatbotReply = async (jid, userText) => {
     return reply;
 };
 
-// CONSOLE LOG
+// ── Console Log ───────────────────────────────────────────────────────────────
 const LOG_COLORS = ['#00ff88','#00d4ff','#ff6b9d','#ffd93d','#a29bfe','#fd79a8'];
 let _logColorIdx = 0;
 const logMsg = (m, body, pushname, senderNum, isGroup, chatId, mtype) => {
     const color = LOG_COLORS[_logColorIdx++ % LOG_COLORS.length];
-    const tz_ = fmt_tz();
-    const time = moment().tz(tz()).format('HH:mm:ss');
-    const sep = chalk.hex(color)('─'.repeat(16) + ' 『 ') + chalk.white.bold('LIAM EYES') + chalk.hex(color)(' 』 ' + '─'.repeat(16));
-    const row = (label, val) => chalk.hex(color)('» ') + chalk.hex('#888')(label.padEnd(14)) + chalk.white(val);
+    const tz_   = fmt_tz();
+    const time  = moment().tz(tz()).format('HH:mm:ss');
+    const sep   = chalk.hex(color)('─'.repeat(16) + ' 『 ') + chalk.white.bold('LIAM EYES') + chalk.hex(color)(' 』 ' + '─'.repeat(16));
+    const row   = (label, val) => chalk.hex(color)('» ') + chalk.hex('#888')(label.padEnd(14)) + chalk.white(val);
     console.log(''); console.log(sep);
-    console.log(row('Time:', `${time} ${tz_}`));
-    console.log(row('Type:', mtype || 'text'));
-    console.log(row('From:', `${pushname} (+${senderNum})`));
-    console.log(row('Chat:', isGroup ? chatId : 'DM'));
-    console.log(row('Body:', (body || 'N/A').slice(0, 80)));
+    console.log(row('Sent Time:', `${time} ${tz_}`));
+    console.log(row('Message Type:', mtype || 'textMessage'));
+    console.log(row('Sender:', senderNum));
+    console.log(row('Name:', pushname || 'Unknown'));
+    console.log(row('Chat ID:', isGroup ? chatId : 'DM'));
+    console.log(row('Message:', (body || 'N/A').slice(0, 80)));
     console.log(chalk.hex(color)('─'.repeat(44)));
 };
 
-// MAIN HANDLER
+// ── Main Handler ──────────────────────────────────────────────────────────────
 module.exports = async (sock, m, chatUpdate, store) => {
     try {
         await loadUtils();
@@ -277,9 +285,9 @@ module.exports = async (sock, m, chatUpdate, store) => {
         if (BOT_PAUSED && !isCreator) return;
         if (BOT_PAUSED && isCmd && command !== 'wake') return;
 
-        // reply = PLAIN TEXT (no image) — used everywhere
+        // ── reply = PLAIN TEXT only, no image ────────────────────────────────
         const reply = txt => sock.sendMessage(m.chat, { text: txt }, { quoted: m }).catch(() => {});
-        // replyMenu = WITH image — ONLY for .menu
+        // ── replyMenu = with image, ONLY used by .menu ────────────────────────
         const replyMenu = async txt => {
             if (menuImage && menuImage.length > 0) {
                 await sock.sendMessage(m.chat, { image: menuImage, caption: txt }, { quoted: m }).catch(() => {});
@@ -295,7 +303,7 @@ module.exports = async (sock, m, chatUpdate, store) => {
             isCreator, isSudo, prefix, reply, config, sender, pushname, senderNum, m,
         };
 
-        // Auto-features
+        // ── Auto-features ─────────────────────────────────────────────────────
         const feat = config.features || {};
         if (feat.autoread      && !m.key.fromMe) sock.readMessages([m.key]).catch(() => {});
         if (feat.autotyping    && !m.key.fromMe) sock.sendPresenceUpdate('composing', m.chat).catch(() => {});
@@ -319,7 +327,7 @@ module.exports = async (sock, m, chatUpdate, store) => {
         if (feat.grouponly   && !m.isGroup) return;
         if (feat.privateonly &&  m.isGroup) return;
 
-        // Numeric menu (1-21)
+        // ── Numeric menu reply 1-21 ───────────────────────────────────────────
         if (!m.key.fromMe && !isCmd) {
             const trimmed = (body || '').replace(/\s+/g, '');
             if (/^\d{1,2}$/.test(trimmed)) {
@@ -332,7 +340,7 @@ module.exports = async (sock, m, chatUpdate, store) => {
             }
         }
 
-        // "bot" keyword — GROUPS ONLY (not DMs)
+        // ── "bot" keyword — GROUPS ONLY, never in DMs ────────────────────────
         if (!m.key.fromMe && !isCmd && m.isGroup && /\bbot\b/i.test(body)) {
             const ph = config.pairingSite || 'https://liam-scanner.onrender.com/pair';
             const gh = config.github      || 'https://github.com/Dialmw/LIAM-EYES';
@@ -346,7 +354,7 @@ module.exports = async (sock, m, chatUpdate, store) => {
             );
         }
 
-        // Chatbot
+        // ── Chatbot ───────────────────────────────────────────────────────────
         if (feat.chatbot && !m.key.fromMe && !isCmd && body.trim().length > 0) {
             try {
                 sock.sendPresenceUpdate('composing', m.chat).catch(() => {});
@@ -357,10 +365,10 @@ module.exports = async (sock, m, chatUpdate, store) => {
         }
         if (!isCmd) return;
 
-        // Plugin dispatch
+        // ── Plugin dispatch ───────────────────────────────────────────────────
         if (await PL.run(command, sock, m, ctx)) return;
 
-        // .menu / .help — WITH image thumbnail
+        // ── .menu / .help — WITH image thumbnail ─────────────────────────────
         if (command === 'menu' || command === 'help') {
             const style  = parseInt(config.menuStyle) || 1;
             const numArg = parseInt(args[0]);
@@ -374,31 +382,31 @@ module.exports = async (sock, m, chatUpdate, store) => {
                     if (PL.categories.has(key)) { const c = PL.style1_cat(prefix, key); if (c) { await replyMenu(c); return; } }
                 }
             }
-            const mem    = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(0) + 'MB';
-            const ramTot = (os.totalmem() / 1024 / 1024 / 1024).toFixed(0) + 'GB';
-            const up     = process.uptime();
-            const upStr  = `${~~(up/86400)}d ${~~(up%86400/3600)}h ${~~(up%3600/60)}m`;
-            const ping   = Math.max(0, Date.now() - (m.messageTimestamp || 0) * 1000);
-            const total  = PL.count();
-            const cats   = PL.primaryCats();
-            const utype  = isCreator ? 'Owner' : isSudo ? 'Sudo' : isAdmins ? 'Admin' : 'User';
+            const mem     = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(0) + 'MB';
+            const ramTot  = (os.totalmem() / 1024 / 1024 / 1024).toFixed(0) + 'GB';
+            const up      = process.uptime();
+            const upStr   = `${~~(up/86400)}d ${~~(up%86400/3600)}h ${~~(up%3600/60)}m`;
+            const ping    = Math.max(0, Date.now() - (m.messageTimestamp || 0) * 1000);
+            const total   = PL.count();
+            const cats    = PL.primaryCats();
+            const utype   = isCreator ? 'Owner' : isSudo ? 'Sudo' : isAdmins ? 'Admin' : 'User';
             const botName = config.settings?.title || '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒';
             const styleIcons = { 1:'🔢 Numbered', 2:'📋 List', 3:'🗂️ Classic', 4:'✒️ Cursive' };
-            const curStyle = parseInt(config.menuStyle) || 1;
+            const curStyle   = parseInt(config.menuStyle) || 1;
             const curStyleNm = styleIcons[curStyle] || 'Numbered';
-            const host = global._hostName || '🖥️ VPS/Local';
-            const styleHint = `\n\n_Change style: *.numbered* | *.list* | *.classic* | *.cursive*_`;
+            const host       = global._hostName || '🖥️ VPS/Local';
+            const styleHint  = `\n\n_Change style: *.numbered* | *.list* | *.classic* | *.cursive*_`;
+            const compactHdr2 =
+                `*👁️ LIAM EYES*  ·  ${total} cmds  ·  ${upStr}  ·  ${mem}\n` +
+                `⚡ ${ping}ms  ·  ${sock.public?'🌍 Public':'🔒 Private'}  ·  ${host}\n\n`;
+
 
             const classicHdr =
-                `╔${'═'.repeat(36)}╗\n` +
-                `║   👁️  *${botName}*  ✦  Alpha Bot   ║\n` +
-                `╚${'═'.repeat(36)}╝\n` +
+                `╔${'═'.repeat(36)}╗\n║   👁️  *${botName}*  ✦  Alpha Bot   ║\n╚${'═'.repeat(36)}╝\n` +
                 `_👁️ Your Eyes in the WhatsApp World_\n\n` +
-                `  ⚡ *Ping*   › ${ping}ms\n  ⏱️ *Uptime* › ${upStr}\n` +
-                `  💾 *RAM*    › ${mem}\n  📦 *Cmds*   › ${total}\n` +
-                `  🌍 *Mode*   › ${sock.public ? 'Public' : 'Private'}\n` +
-                `  🎨 *Style*  › ${curStyleNm}\n  🔰 *Prefix* › ${prefix}\n` +
-                `  🖥️ *Host*   › ${host}\n`;
+                `  ⚡ *Ping*   › ${ping}ms\n  ⏱️ *Uptime* › ${upStr}\n  💾 *RAM*    › ${mem}\n` +
+                `  📦 *Cmds*   › ${total}\n  🌍 *Mode*   › ${sock.public ? 'Public' : 'Private'}\n` +
+                `  🎨 *Style*  › ${curStyleNm}\n  🔰 *Prefix* › ${prefix}\n  🖥️ *Host*   › ${host}\n`;
 
             const header = sBox(`          *${botName}*`) + '\n\n' +
                 sBox(
@@ -415,12 +423,15 @@ module.exports = async (sock, m, chatUpdate, store) => {
                 ) + '\n\n' + sBox(`📂 *AVAILABLE CATEGORIES*`) + '\n\n';
 
             if (style === 1) {
-                const txt = classicHdr + PL.style1_index() + `\n\n_Reply 1–${cats.length} to open · ${prefix}menu 5 to jump_`;
+                const compactHdr =
+                    `⚡ *LIAM EYES* · ${total} cmds · ${upStr} · ${mem}\n` +
+                    `${ping}ms · ${sock.public?'🌍 Public':'🔒 Private'} · ${host}\n\n`;
+                const txt = compactHdr + PL.style1_index() + `\n\n_Reply 1–${cats.length} to open_`;
                 await replyMenu(txt); return;
             }
-            if (style === 2) { await replyMenu(header + PL.style2(prefix) + styleHint); return; }
-            if (style === 3) { await replyMenu(classicHdr + PL.style3(prefix) + styleHint); return; }
-            if (style === 4) { await replyMenu(header + PL.style4(prefix) + styleHint); return; }
+            if (style === 2) { await replyMenu(compactHdr2 + PL.style2(prefix) + styleHint); return; }
+            if (style === 3) { await replyMenu(compactHdr2 + PL.style3(prefix) + styleHint); return; }
+            if (style === 4) { await replyMenu(compactHdr2 + PL.style4(prefix) + styleHint); return; }
         }
 
         if (command === 'kill') {

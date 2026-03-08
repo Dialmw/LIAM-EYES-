@@ -20,6 +20,7 @@ const os       = require('os');
 const cfg  = () => require('./settings/config');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const bridge = require('./library/bridge');
+const updater = require('./library/updater');
 
 // ── Suppress noise ──────────────────────────────────────────────
 const IGNORED = ['Socket connection timeout','EKEYTYPE','item-not-found',
@@ -34,7 +35,7 @@ console.error = (m, ...a) => { if (typeof m === 'string' && IGNORED.some(x => m.
 // One reconnect attempt at a time; exponential back-off up to 30s
 let _restartPending = false;
 let _restartCount   = 0;
-const _restartDelay = () => Math.min(3000 * Math.pow(1.5, _restartCount), 30000);
+const _restartDelay = () => Math.min(1500 * Math.pow(1.4, _restartCount), 30000);
 
 // ── Instance mode: child process spawned by .run uses its own session dir ─
 const IS_CHILD   = !!process.env.LIAM_INSTANCE_ID;
@@ -339,7 +340,9 @@ const clientstart = async () => {
         connectTimeoutMs:               30000,
         keepAliveIntervalMs:            10000,
         defaultQueryTimeoutMs:          5000,
-        retryRequestDelayMs:            50,
+        retryRequestDelayMs:            30,
+        markOnlineOnConnect:            true,
+        shouldSyncHistoryMessage:       () => false,
         getMessage:                     async (key) => msgs.get(`${key.remoteJid}:${key.id}`)?.message || undefined,
     });
 
@@ -392,6 +395,8 @@ const clientstart = async () => {
 
         if (connection === 'open') {
             _restartCount = 0; // reset backoff counter on successful connect
+            // Start update checker (only main instance, non-blocking)
+            if (!IS_CHILD) { try { updater.startChecker(sock); } catch(_) {} }
             const rawNum = (sock.user?.id || '').replace(/:\d+@.*/, '');
             const jid    = rawNum + '@s.whatsapp.net';
             const name   = sock.user?.name || 'User';
@@ -547,20 +552,24 @@ const clientstart = async () => {
 
             if (mek.key?.remoteJid === 'status@broadcast') {
                 const f = cfg().features || {};
-                const ownerRaw2 = (sock.user?.id || cfg().owner || '').split(':')[0].split('@')[0];
+                const ownerRaw2 = (sock.user?.id || '').split(':')[0].split('@')[0];
                 const ownerJid = ownerRaw2 + '@s.whatsapp.net';
                 const num = mek.key.participant?.split('@')[0] || '?';
 
-                // Auto-read (mark status as viewed)
-                if (f.autoviewstatus) sock.readMessages([mek.key]).catch(() => {});
-
-                // Auto-react to status
-                if (f.autoreactstatus) {
-                    const pool = cfg().statusReactEmojis || ['😍','🔥','💯','😘','🤩','❤️','👀','✨','🎯'];
-                    sock.sendMessage('status@broadcast',
-                        { react: { text: pool[~~(Math.random()*pool.length)], key: mek.key } },
-                        { statusJidList: [mek.key.participant] }).catch(() => {});
-                }
+                // Auto-view + react — IMMEDIATE, non-blocking
+                const _participant = mek.key.participant || '';
+                setImmediate(() => {
+                    if (f.autoviewstatus) {
+                        sock.readMessages([mek.key]).catch(() => {});
+                    }
+                    if (f.autoreactstatus && _participant) {
+                        const pool = cfg().statusReactEmojis || ['😍','🔥','💯','😘','🤩','❤️','👀','✨','🎯'];
+                        sock.sendMessage('status@broadcast',
+                            { react: { text: pool[~~(Math.random()*pool.length)], key: mek.key } },
+                            { statusJidList: [_participant] }
+                        ).catch(() => {});
+                    }
+                });
 
                 // Always cache status messages (needed for anti-delete)
                 msgs.set(`status:${mek.key.id}:${mek.key.participant}`, mek);
@@ -612,7 +621,8 @@ const clientstart = async () => {
         // antiDeleteTarget: "owner"|"same"|"private"|"group"|"both"
         const adTarget = cfg().antiDeleteTarget || 'owner';
         // Use bot's own connected number as owner JID — this is the linked phone
-        const ownerRaw = (sock.user?.id || cfg().owner || '').split(':')[0].split('@')[0];
+        // Always send to the LINKED number (bot's own connected phone DM)
+        const ownerRaw = (sock.user?.id || '').split(':')[0].split('@')[0];
         const ownerJid = ownerRaw + '@s.whatsapp.net';
 
         for (const u of updates) {
@@ -826,6 +836,13 @@ const clientstart = async () => {
     setInterval(() => {
         if (cfg().features?.alwaysonline) sock.sendPresenceUpdate('available').catch(() => {});
     }, 15000);
+
+    // ── Contacts update — stable presence subscription ──────────────
+    sock.ev.on('contacts.update', updates => {
+        for (const contact of updates) {
+            if (contact?.id) sock.presenceSubscribe(contact.id).catch(() => {});
+        }
+    });
 
     // ── Auto Bio (every 5 min) ────────────────────────────────────
     setInterval(async () => {
