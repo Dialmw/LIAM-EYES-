@@ -35,6 +35,10 @@ const script = t => t.split('').map(c => _map([
     ['abcdefghijklmnopqrstuvwxyz','𝓪𝓫𝓬𝓭𝓮𝓯𝓰𝓱𝓲𝓳𝓴𝓵𝓶𝓷𝓸𝓹𝓺𝓻𝓼𝓽𝓾𝓿𝔀𝔁𝔂𝔃'],
 ], c)).join('');
 
+// ── Bold font map (matches LITE style) ──────────────────────────────────────
+const B = s => s.split('').map(ch=>({'A':'𝗔','B':'𝗕','C':'𝗖','D':'𝗗','E':'𝗘','F':'𝗙','G':'𝗚','H':'𝗛','I':'𝗜','J':'𝗝','K':'𝗞','L':'𝗟','M':'𝗠','N':'𝗡','O':'𝗢','P':'𝗣','Q':'𝗤','R':'𝗥','S':'𝗦','T':'𝗧','U':'𝗨','V':'𝗩','W':'𝗪','X':'𝗫','Y':'𝗬','Z':'𝗭','a':'𝗮','b':'𝗯','c':'𝗰','d':'𝗱','e':'𝗲','f':'𝗳','g':'𝗴','h':'𝗵','i':'𝗶','j':'𝗷','k':'𝗸','l':'𝗹','m':'𝗺','n':'𝗻','o':'𝗼','p':'𝗽','q':'𝗾','r':'𝗿','s':'𝘀','t':'𝘁','u':'𝘂','v':'𝘃','w':'𝘄','x':'𝘅','y':'𝘆','z':'𝘇','0':'𝟬','1':'𝟭','2':'𝟮','3':'𝟯','4':'𝟰','5':'𝟱','6':'𝟲','7':'𝟳','8':'𝟴','9':'𝟵',' ':' '}[ch]||ch)).join('');
+const DENY = () => '𝙈𝙢𝙢 𝙣𝙤𝙩 𝙖𝙡𝙡𝙤𝙬𝙚𝙙 🫵, 𝙖𝙨𝙠 𝙢𝙮 𝙢𝙖𝙨𝙩𝙚𝙧 👁️';
+
 const STAR  = '★★★★★★★★★';
 const BOX_T = `╔${STAR}╗`;
 const BOX_B = `╚${STAR}╝`;
@@ -396,31 +400,28 @@ module.exports = async (sock, m, chatUpdate, store) => {
             const curStyleNm = styleIcons[curStyle] || 'Numbered';
             const host       = global._hostName || '🖥️ VPS/Local';
             const styleHint  = `\n\n_Change style: *.numbered* | *.list* | *.classic* | *.cursive*_`;
-            const compactHdr2 =
-                `*👁️ LIAM EYES*  ·  ${total} cmds  ·  ${upStr}  ·  ${mem}\n` +
-                `⚡ ${ping}ms  ·  ${sock.public?'🌍 Public':'🔒 Private'}  ·  ${host}\n\n`;
+            // ── LITE-style vertical header (shared across all styles) ──
+            const ramPct = Math.min(100,Math.round(process.memoryUsage().heapUsed/require('os').totalmem()*100));
+            const ramBarStr = '■'.repeat(Math.round(ramPct/25))+'□'.repeat(4-Math.round(ramPct/25))+' '+ramPct+'%';
+            const liteHdr =
+                `╔═══〚 👁️ ${B('LIAM  EYES')} 〛═══╗\n` +
+                `║✫╭─╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍\n` +
+                `║✫┃ ${B('User')}   : ${B((pushname||'User').slice(0,16))}\n` +
+                `║✫┃ ${B('Prefix')} : ${B(prefix)}\n` +
+                `║✫┃ ${B('Mode')}   : ${B(sock.public?'Public':'Private')}\n` +
+                `║✫┃ ${B('Host')}   : ${B(host.replace(/[🟣🟦🚂📱🟠🪁🟢🖥️]/g,'').trim())}\n` +
+                `║✫┃ ${B('RAM')}    : ${ramBarStr}\n` +
+                `║✫┃ ${B('Cmds')}  : ${B(String(total)+'⁺')}\n` +
+                `║✫┃ ${B('Ping')}  : ${B(ping+'ms')}\n` +
+                `║✫┃ ${B('Uptime')}: ${B(upStr)}\n` +
+                `║✫┃═════════════════════\n` +
+                `║✫┃ █■█■█■█■█■█■█■█■█■█\n` +
+                `║✫┃═════════════════════\n` +
+                `╚════════════════════════╝\n`;
 
-
-            const classicHdr =
-                `╔${'═'.repeat(36)}╗\n║   👁️  *${botName}*  ✦  Alpha Bot   ║\n╚${'═'.repeat(36)}╝\n` +
-                `_👁️ Your Eyes in the WhatsApp World_\n\n` +
-                `  ⚡ *Ping*   › ${ping}ms\n  ⏱️ *Uptime* › ${upStr}\n  💾 *RAM*    › ${mem}\n` +
-                `  📦 *Cmds*   › ${total}\n  🌍 *Mode*   › ${sock.public ? 'Public' : 'Private'}\n` +
-                `  🎨 *Style*  › ${curStyleNm}\n  🔰 *Prefix* › ${prefix}\n  🖥️ *Host*   › ${host}\n`;
-
-            const header = sBox(`          *${botName}*`) + '\n\n' +
-                sBox(
-                    `➤ *ᴏᴡɴᴇʀ*     : ${config.settings?.author || 'Liam'}`,
-                    `➤ *ᴘʀᴇғɪx*    : [ ${prefix} ]`,
-                    `➤ *ʜᴏsᴛ*      : ${host}`,
-                    `➤ *ᴍᴏᴅᴇ*      : ${sock.public ? 'Public' : 'Private'}`,
-                    `➤ *ᴠᴇʀsɪᴏɴ*   : ${config.settings?.version || 'Alpha'}`,
-                    `➤ *ᴜᴘᴛɪᴍᴇ*    : ${upStr}`,
-                    `➤ *ᴘɪɴɢ*      : ${ping}ms`,
-                    `➤ *ᴄᴏᴍᴍᴀɴᴅs*  : ${total}`,
-                    `➤ *ᴜsᴇʀ ᴛʏᴘᴇ* : ${utype}`,
-                    `➤ *ʀᴀᴍ*       : ${mem} / ${ramTot}`,
-                ) + '\n\n' + sBox(`📂 *AVAILABLE CATEGORIES*`) + '\n\n';
+            const compactHdr2 = liteHdr;
+            const classicHdr  = liteHdr;
+            const header       = liteHdr;
 
             if (style === 1) {
                 const compactHdr =
@@ -435,12 +436,12 @@ module.exports = async (sock, m, chatUpdate, store) => {
         }
 
         if (command === 'kill') {
-            if (!isCreator) return reply(config.message.owner);
+            if (!isCreator) return reply(DENY());
             BOT_PAUSED = true;
             return reply(`🔴 *Bot Paused*\n\nUse *${prefix}wake* to resume.\n\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`);
         }
         if (command === 'wake') {
-            if (!isCreator) return reply(config.message.owner);
+            if (!isCreator) return reply(DENY());
             BOT_PAUSED = false;
             return reply(`🟢 *Bot Active*\n\nI'm back online!\n\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`);
         }
@@ -448,7 +449,7 @@ module.exports = async (sock, m, chatUpdate, store) => {
         const _sW = { numbered:1, list:2, classic:3, cursive:4 };
         const _sI = { 1:'🔢 Numbered', 2:'📋 List', 3:'🗂️ Classic', 4:'✒️ Cursive' };
         if (['menustyle','setmenustyle','numbered','list','classic','cursive'].includes(command)) {
-            if (!isCreator && !isSudo) return reply(config.message.owner);
+            if (!isCreator && !isSudo) return reply(DENY());
             if (_sW[command] !== undefined) { config.menuStyle = _sW[command]; return reply(`✅ *Menu style → ${_sI[_sW[command]]}*\n\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`); }
             const curSt = parseInt(config.menuStyle) || 1;
             const argN = parseInt(args[0]) || _sW[(args[0]||'').toLowerCase()];
@@ -456,7 +457,7 @@ module.exports = async (sock, m, chatUpdate, store) => {
             return reply(`🎨 *Menu Style — Current:* ${curSt} (${_sI[curSt]})\n\nUse *.numbered* *.list* *.classic* *.cursive*\n\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`);
         }
         if (command === 'reload') {
-            if (!isCreator) return reply(config.message.owner);
+            if (!isCreator) return reply(DENY());
             PL.reload();
             return reply(`✅ *Reloaded* — ${PL.count()} commands\n\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒 👁️`);
         }
