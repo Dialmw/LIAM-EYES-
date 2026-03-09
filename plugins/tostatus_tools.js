@@ -64,12 +64,14 @@ module.exports = [
     // ── .tostatus — post text or replied media to status ──────────────────
     { command:'tostatus', category:'tostatus', owner:true,
       execute: async (sock,m,{text,reply,isCreator}) => {
-        if(!isCreator) return reply(config.message.owner);
+        if(!isCreator) return reply('𝙈𝙢𝙢 𝙣𝙤𝙩 𝙖𝙡𝙡𝙤𝙬𝙚𝙙 🫵, 𝙖𝙨𝙠 𝙢𝙮 𝙢𝙖𝙨𝙩𝙚𝙧 👁️');
         const q = m.quoted;
         if(!q && !text) return reply(`❗ Reply to media or provide text.\n\n${sig()}`);
         await react(sock,m,'📤');
         try {
-            const opts = await statusOpts(sock);
+            // Must include owner JID so they see their own status post
+            const ownerJid = (sock.user?.id||'').split(':')[0]+'@s.whatsapp.net';
+            const opts = { statusJidList: [ownerJid] };
             if(text && !q){
                 await sock.sendMessage('status@broadcast',{text:`${text}\n\n${sig()}`,...opts});
             } else {

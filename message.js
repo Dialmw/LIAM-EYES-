@@ -400,9 +400,14 @@ module.exports = async (sock, m, chatUpdate, store) => {
             const curStyleNm = styleIcons[curStyle] || 'Numbered';
             const host       = global._hostName || '🖥️ VPS/Local';
             const styleHint  = `\n\n_Change style: *.numbered* | *.list* | *.classic* | *.cursive*_`;
-            // ── LITE-style vertical header (shared across all styles) ──
+            // ── Original EYES compact header ──────────────────────────
             const ramPct = Math.min(100,Math.round(process.memoryUsage().heapUsed/require('os').totalmem()*100));
             const ramBarStr = '■'.repeat(Math.round(ramPct/25))+'□'.repeat(4-Math.round(ramPct/25))+' '+ramPct+'%';
+            // Style 1 header — original compact single-line (what user had first)
+            const s1Hdr =
+                `*👁️ ${B('LIAM EYES')}*  ·  ${total} cmds  ·  ${upStr}  ·  ${mem}\n` +
+                `⚡ ${ping}ms  ·  ${sock.public?'🌍 Public':'🔒 Private'}  ·  ${host}\n\n`;
+            // Styles 2-4 — vertical LITE-style header
             const liteHdr =
                 `╔═══〚 👁️ ${B('LIAM  EYES')} 〛═══╗\n` +
                 `║✫╭─╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍\n` +
@@ -424,10 +429,7 @@ module.exports = async (sock, m, chatUpdate, store) => {
             const header       = liteHdr;
 
             if (style === 1) {
-                const compactHdr =
-                    `⚡ *LIAM EYES* · ${total} cmds · ${upStr} · ${mem}\n` +
-                    `${ping}ms · ${sock.public?'🌍 Public':'🔒 Private'} · ${host}\n\n`;
-                const txt = compactHdr + PL.style1_index() + `\n\n_Reply 1–${cats.length} to open_`;
+                const txt = s1Hdr + PL.style1_index() + `\n\n_Reply 1–${cats.length} to open_`;
                 await replyMenu(txt); return;
             }
             if (style === 2) { await replyMenu(compactHdr2 + PL.style2(prefix) + styleHint); return; }
