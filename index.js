@@ -19,6 +19,20 @@ const os       = require('os');
 
 const cfg  = () => require('./settings/config');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ── Validate + restore base64 session ────────────────────────────────────
+const restoreSession = (sid, dir) => {
+    if (!sid) return false;
+    const raw = sid.startsWith('LIAM:~') ? sid.replace(/^LIAM:~/, '') : sid;
+    if (!/^[A-Za-z0-9+/=]+$/.test(raw.replace(/\s/g,''))) return false;
+    try {
+        const buf = Buffer.from(raw.replace(/\s/g,''), 'base64');
+        if (buf.length < 100) return false;
+        const cp = require('path').join(dir, 'creds.json');
+        require('fs').writeFileSync(cp, buf);
+        return true;
+    } catch(_) { return false; }
+};
 const bridge = require('./library/bridge');
 const updater = require('./library/updater');
 

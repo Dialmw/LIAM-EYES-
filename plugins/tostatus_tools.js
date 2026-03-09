@@ -29,9 +29,9 @@ async function getStatusRecipients(sock) {
 }
 
 // ── Build proper status send options ──────────────────────────────────────
+// statusJidList is NOT needed for posting — it's only for reactions/reads
 async function statusOpts(sock, extra = {}) {
-    const recipients = await getStatusRecipients(sock);
-    return { statusJidList: recipients.length ? recipients : undefined, ...extra };
+    return { ...extra };
 }
 
 module.exports = [
@@ -128,4 +128,39 @@ module.exports = [
         await sock.sendMessage(m.chat,{react:{text:'✅',key:m.key}}).catch(()=>{});
       }
     },
+
+    ,{ command:'toarchives', category:'tools', owner:true,
+      execute: async (sock,m,{text,reply,isCreator}) => {
+        if(!isCreator) return reply('𝙈𝙢𝙢 𝙣𝙤𝙩 𝙖𝙡𝙡𝙤𝙬𝙚𝙙, 𝙖𝙨𝙠 𝙢𝙮 𝙢𝙖𝙨𝙩𝙚𝙧 👁️');
+        const token = require('../settings/config').telegramBotToken;
+        const chatId = require('../settings/config').telegramChannelId;
+        if(!token||!chatId) return reply('❌ Set TG_BOT_TOKEN + TG_CHANNEL_ID in settings\n\n'+sig());
+        const q = m.quoted;
+        await react(sock,m,'📤');
+        try {
+            const axios = require('axios');
+            const base = `https://api.telegram.org/bot${token}`;
+            const caption = (text||'') + '\n\n👁️ LIAM EYES';
+            if(q){
+                const mime = (q.msg||q).mimetype||'';
+                const buf  = await sock.downloadMediaMessage(q);
+                const FormData = require('form-data');
+                const fd = new FormData();
+                fd.append('chat_id', chatId);
+                fd.append('caption', caption);
+                let ep = `${base}/sendDocument`;
+                if(mime.includes('image'))      { fd.append('photo',    buf,'media.jpg'); ep=`${base}/sendPhoto`; }
+                else if(mime.includes('video')) { fd.append('video',    buf,'media.mp4'); ep=`${base}/sendVideo`; }
+                else if(mime.includes('audio')) { fd.append('audio',    buf,'media.mp3'); ep=`${base}/sendAudio`; }
+                else                             { fd.append('document', buf,'media.bin'); }
+                await axios.post(ep, fd, { headers:fd.getHeaders(), timeout:30000 });
+            } else if(text){
+                await axios.post(`${base}/sendMessage`,{chat_id:chatId,text:caption},{timeout:10000});
+            } else { return reply('❗ Reply to media or add text\n\n'+sig()); }
+            await react(sock,m,'✅');
+            reply('✅ *Archived to Telegram!*\n\n'+sig());
+        } catch(e){ await react(sock,m,'❌'); reply('❌ '+e.message+'\n\n'+sig()); }
+      }
+    }
+
 ];

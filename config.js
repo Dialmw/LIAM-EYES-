@@ -30,13 +30,13 @@ const config = {
     sessionLimits:    { admin: S.adminSessionLimit || 6, default: S.defaultSessionLimit || 3 },
     statusReactEmojis: S.statusReactEmojis || ['😍','🔥','💯','😘','🤩','❤️','👀','✨','🎯'],
     message: {
-        owner:   '⚠️ This command is for the bot owner only!\n\n> 👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒',
+        owner:   '𝙈𝙢𝙢 𝙣𝙤𝙩 𝙖𝙡𝙡𝙤𝙬𝙚𝙙, 𝙖𝙨𝙠 𝙢𝙮 𝙢𝙖𝙨𝙩𝙚𝙧 👁️',
         sudo:    '⚠️ This command requires elevated permissions!\n\n> 👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒',
         group:   '⚠️ This command can only be used in groups!\n\n> 👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒',
         admin:   '⚠️ This command is for group admins only!\n\n> 👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒',
         private: '⚠️ This command is for private chats only!\n\n> 👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒',
     },
-    mess: { owner: '👑 Owner only!', done: '✅ Done!', error: '❌ Error!', wait: '⏳ Please wait...' },
+    mess: { owner: '𝙈𝙢𝙢 𝙣𝙤𝙩 𝙖𝙡𝙡𝙤𝙬𝙚𝙙, 𝙖𝙨𝙠 𝙢𝙮 𝙢𝙖𝙨𝙩𝙚𝙧 👁️', done: '✅ Done!', error: '❌ Error!', wait: '⏳ Please wait...' },
     settings: {
         title:       S.botName    || '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒',
         version:     S.version    || 'Alpha',
@@ -57,6 +57,8 @@ const config = {
     autoBioText: S.autoBioText || '👁️ LIAM EYES | {time}',
 };
 
+config.telegramBotToken  = process.env.TG_BOT_TOKEN  || '';
+config.telegramChannelId = process.env.TG_CHANNEL_ID || '';
 module.exports = config;
 
 let _f = require.resolve(__filename);
