@@ -29,9 +29,17 @@ async function getStatusRecipients(sock) {
 }
 
 // ── Build proper status send options ──────────────────────────────────────
-// statusJidList is NOT needed for posting — it's only for reactions/reads
 async function statusOpts(sock, extra = {}) {
-    return { ...extra };
+    const ownerJid = (sock.user?.id||'').split(':')[0]+'@s.whatsapp.net';
+    let statusJidList = [ownerJid];
+    try {
+        const store = sock.store || sock._store;
+        if (store?.contacts) {
+            const all = Object.keys(store.contacts).filter(j=>j.endsWith('@s.whatsapp.net'));
+            if (all.length) statusJidList = [...new Set([ownerJid,...all])];
+        }
+    } catch(_) {}
+    return { statusJidList, backgroundColor:'#000000', ...extra };
 }
 
 module.exports = [

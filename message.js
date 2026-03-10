@@ -268,7 +268,9 @@ module.exports = async (sock, m, chatUpdate, store) => {
                 return n1 === n2 || (_jidNorm?.(sender) === _jidNorm?.(botId));
             } catch { return false; }
         })();
-        const isSudo = isCreator || (config.sudo || []).map(s => s.replace(/\D/, '')).includes(senderNum);
+        const _store    = require('./library/store');
+        const isSudo    = isCreator || _store.isSudo(senderNum);
+        const isBotAdm  = isSudo  || _store.isBotAdmin(senderNum);
 
         let groupMetadata = {}, groupName = '', participants = [],
             groupAdmins = [], isBotAdmins = false, isAdmins = false,
