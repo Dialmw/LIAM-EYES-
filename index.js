@@ -953,7 +953,17 @@ _Anti-call is ON. Turn off with .anticall off_
         return jid;
     };
 
-    return sock;
+    
+    // ── Long-term stability ────────────────────────────────────────────────────
+    setInterval(() => {
+        if (global.gc) try { global.gc(); } catch(_) {}
+        console.log('[HEALTH] uptime=' + Math.round(process.uptime()/3600) + 'h mem=' + Math.round(process.memoryUsage().heapUsed/1024/1024) + 'MB');
+    }, 6 * 60 * 60 * 1000);
+    if (process.env.RENDER || process.env.HEROKU_APP_NAME || process.env.RAILWAY_PROJECT_ID) {
+        setInterval(() => { sock.sendPresenceUpdate('available').catch(()=>{}); }, 4*60*1000);
+    }
+
+return sock;
 };
 
 clientstart();
