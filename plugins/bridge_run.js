@@ -1,20 +1,23 @@
 // ════════════════════════════════════════════════════════════════════════════
-// ║  👁️  LIAM EYES — bridge_run.js                                         ║
-// ║  .run <sessionId>     — spawn a second bot instance on a new session   ║
-// ║  .bridge <tg_token>   — connect Telegram bot ↔ WA bot                 ║
-// ║  .webconnect <url>    — connect website to WA+TG bridge                ║
-// ║  .runstop <id>        — stop a running bot instance                    ║
-// ║  .runlist             — list all running instances                     ║
+// ║  👁️  LIAM EYES — bridge_run.js  (20-session edition)                   ║
+// ║  .run <sessionId>  — spawn a bot instance (up to 20 simultaneous)      ║
+// ║  .runstop <id>     — stop a running instance                           ║
+// ║  .runlist          — list all running instances                        ║
+// ║  .runrestart <id>  — force-restart a specific instance                 ║
+// ║  .bridge <token>   — connect Telegram bridge                           ║
+// ║  .webconnect <url> — connect website to bridge                         ║
 // ════════════════════════════════════════════════════════════════════════════
 'use strict';
-const fs     = require('fs');
-const path   = require('path');
+
+const fs      = require('fs');
+const path    = require('path');
 const { fork } = require('child_process');
-const config = require('../settings/config');
+const config  = require('../settings/config');
 
 const sig   = () => '> 👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒';
 const react = (s,m,e) => s.sendMessage(m.chat, { react:{text:e,key:m.key} }).catch(()=>{});
-// Safe logger (works even when global L from index.js isn't available)
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
 const L = global._L || {
     ok:   m => console.log(`  ✔ ${m}`),
     warn: m => console.log(`  ⚠ ${m}`),
@@ -22,49 +25,189 @@ const L = global._L || {
     info: m => console.log(`  ℹ ${m}`),
 };
 
-// ── Global instance registry (survives hot-reload via global) ──────────────
-if (!global._liamInstances) global._liamInstances = new Map();
-// bridge: { token, tgChatId, waBridgeUrl }
-if (!global._liamBridge) global._liamBridge = { token: '', connected: false, wsClients: new Set() };
-// webconnect: Set of connected website URLs
-if (!global._liamWebConnect) global._liamWebConnect = { url: '', connected: false };
+// ── Global instance registry ───────────────────────────────────────────────
+if (!global._liamInstances)   global._liamInstances   = new Map();
+if (!global._liamBridge)      global._liamBridge       = { token:'', connected:false };
+if (!global._liamWebConnect)  global._liamWebConnect   = { url:'', connected:false };
 
 const instances = global._liamInstances;
 const bridge    = global._liamBridge;
+if (!bridge.token && config.bridgeToken) bridge.token = config.bridgeToken;
 
-// ── Restore bridgeToken from settings at startup ──────────────────────────
-if (!bridge.token && config.bridgeToken) {
-    bridge.token = config.bridgeToken;
-}
+// ── Hard cap: 20 concurrent sub-instances ─────────────────────────────────
+const MAX_INSTANCES = 20;
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  SESSION DECODE — accept LIAM:~ format (same as pair site)
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Session decode ─────────────────────────────────────────────────────────
 function decodeSession(sessionId) {
-    const s = (sessionId || '').trim();
-    // Format: LIAM:~<base64>  or  LIAM~<base64>
+    const s   = (sessionId || '').trim();
     const b64 = s.replace(/^LIAM:?~/i, '');
     if (!b64 || b64 === s) return null;
-    // Try standard base64 first (used by index.js when generating session IDs)
-    // then fallback to base64url (used by some pair sites)
-    let parsed = null;
     for (const enc of ['base64', 'base64url']) {
         try {
             const text = Buffer.from(b64, enc).toString('utf8');
-            // Validate it's actually JSON with expected Baileys creds fields
-            const obj = JSON.parse(text);
-            if (obj && (obj.noiseKey || obj.signedIdentityKey || obj.me || obj.registered !== undefined)) {
-                parsed = obj;
-                break;
-            }
-        } catch { /* try next encoding */ }
+            const obj  = JSON.parse(text);
+            if (obj && (obj.noiseKey || obj.signedIdentityKey || obj.me || obj.registered !== undefined))
+                return obj;
+        } catch { /* try next */ }
     }
-    return parsed;
+    return null;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  .run <sessionId> — spawn a second fully functional bot instance
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Instance health / state ────────────────────────────────────────────────
+function instState(id) {
+    return instances.get(id) || null;
+}
+
+// ── Spawn one child instance ───────────────────────────────────────────────
+function spawnChild(opts) {
+    const {
+        sock,          // parent WA socket (for DM feedback)
+        m,             // parent message (for DM feedback)
+        instanceId,
+        sessionDir,
+        isRestart = false,
+    } = opts;
+
+    const child = fork(path.join(__dirname, '..', 'index.js'), [], {
+        env: {
+            ...process.env,
+            LIAM_SESSION_DIR: sessionDir,
+            LIAM_INSTANCE_ID: instanceId,
+            LIAM_PARENT_JID:  m?.chat || '',
+            // Clear parent session vars so child never inherits them
+            SESSION_ID:       '',
+            LIAM_SESSION_ID:  '',
+            PAIR_NUMBER:      '',
+            PHONE_NUMBER:     '',
+            LIAM_NUMBER:      '',
+        },
+        detached: false,
+        silent:   true,
+    });
+
+    const inst = instances.get(instanceId) || {};
+    let started   = false;
+    let exitCount = inst.exitCount || 0;
+    let startTimer;
+
+    // ── stdout pipe ──────────────────────────────────────────────────────
+    child.stdout?.on('data', d => {
+        const txt = d.toString().trim();
+        if (txt) process.stdout.write(`[${instanceId}] ${txt}\n`);
+        if (!started && (txt.includes('ONLINE') || txt.includes('successfully connected')))
+            started = true;
+    });
+    child.stderr?.on('data', d => {
+        const txt = d.toString().trim();
+        const NOISE = ['EKEYTYPE','Bad MAC','rate-overlimit','item-not-found','Socket connection timeout'];
+        if (txt && !NOISE.some(x => txt.includes(x)))
+            process.stderr.write(`[${instanceId}] ${txt}\n`);
+    });
+
+    // ── IPC: child reports CONNECTED ──────────────────────────────────────
+    child.on('message', async msg => {
+        if (msg.type !== 'CONNECTED') return;
+        started = true;
+        clearTimeout(startTimer);
+        const existing = instances.get(instanceId) || {};
+        instances.set(instanceId, {
+            ...existing,
+            pid:        child.pid,
+            child,
+            num:        msg.number || '?',
+            startedAt:  existing.startedAt || Date.now(),
+            sessionDir,
+            exitCount,
+            status:     'online',
+        });
+        if (!isRestart && sock && m) {
+            await sock.sendMessage(m.chat, {
+                text:
+                    `✅ *Bot Instance Connected!*\n\n` +
+                    `🆔 ID   : \`${instanceId}\`\n` +
+                    `📱 Num  : *+${msg.number || '?'}*\n` +
+                    `⚡ PID  : ${child.pid}\n` +
+                    `📊 Total: *${instances.size} / ${MAX_INSTANCES}*\n\n` +
+                    `━━━━━━━━━━━━━━━━━━━━━━\n\n${sig()}`
+            }, { quoted: m }).catch(()=>{});
+        } else if (isRestart) {
+            L.ok(`[${instanceId}] Reconnected (#${exitCount}) as +${msg.number || '?'}`);
+        }
+    });
+
+    // ── child error ───────────────────────────────────────────────────────
+    child.on('error', async e => {
+        L.err(`[${instanceId}] fork error: ${e.message}`);
+        if (!isRestart && sock && m)
+            sock.sendMessage(m.chat, { text:`❌ Instance error: ${e.message}\n\n${sig()}` }, { quoted: m }).catch(()=>{});
+    });
+
+    // ── child exit ────────────────────────────────────────────────────────
+    child.on('exit', (code, signal) => {
+        clearTimeout(startTimer);
+        const inst = instances.get(instanceId);
+
+        // Manual stop via SIGTERM or .runstop
+        if (!instances.has(instanceId) || signal === 'SIGTERM') {
+            instances.delete(instanceId);
+            L.warn(`[${instanceId}] Stopped cleanly (code=${code} sig=${signal})`);
+            return;
+        }
+
+        exitCount++;
+        instances.set(instanceId, { ...inst, status:'crashed', exitCount, child: null, pid: null });
+
+        // Auto-restart with exponential back-off — up to 8 attempts
+        const MAX_RESTARTS = 8;
+        if (exitCount <= MAX_RESTARTS) {
+            const delay_ms = Math.min(2000 * Math.pow(1.8, exitCount - 1), 60000);
+            L.warn(`[${instanceId}] Exited (code=${code}). Restart in ${(delay_ms/1000).toFixed(1)}s (attempt ${exitCount}/${MAX_RESTARTS})`);
+            setTimeout(() => {
+                if (instances.has(instanceId)) {
+                    instances.set(instanceId, { ...instances.get(instanceId), status:'restarting' });
+                    spawnChild({ sock, m, instanceId, sessionDir, isRestart: true });
+                }
+            }, delay_ms);
+        } else {
+            instances.delete(instanceId);
+            L.err(`[${instanceId}] Permanently failed after ${exitCount} restarts`);
+            if (sock && m)
+                sock.sendMessage(m.chat, {
+                    text: `💀 *Instance \`${instanceId}\` permanently crashed*\n\nAfter ${exitCount} restart attempts — check your session.\n\n${sig()}`
+                }, { quoted: m }).catch(()=>{});
+        }
+    });
+
+    // Update registry immediately
+    instances.set(instanceId, {
+        ...(instances.get(instanceId) || {}),
+        pid:        child.pid,
+        child,
+        num:        inst.num || '?',
+        startedAt:  inst.startedAt || Date.now(),
+        sessionDir,
+        exitCount,
+        status:     'starting',
+    });
+
+    // Timeout if not connected in 60s
+    startTimer = setTimeout(() => {
+        if (!started) {
+            child.kill('SIGTERM');
+            instances.delete(instanceId);
+            if (!isRestart && sock && m)
+                sock.sendMessage(m.chat, {
+                    text: `⏱️ Instance \`${instanceId}\` timed out — session may be expired.\n\n${sig()}`
+                }, { quoted: m }).catch(()=>{});
+        }
+    }, 60000);
+
+    return child;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  .run <sessionId>
+// ═════════════════════════════════════════════════════════════════════════════
 async function runInstance(sock, m, ctx) {
     if (!ctx.isCreator) return ctx.reply(config.message.owner);
 
@@ -72,8 +215,9 @@ async function runInstance(sock, m, ctx) {
     if (!raw) {
         return ctx.reply(
             `❓ *Usage:* \`.run <session_id>\`\n\n` +
-            `Paste a session ID to spawn a second bot instance.\n` +
-            `Get session IDs from: https://liam-scanner.onrender.com/pair\n\n${sig()}`
+            `Paste a LIAM:~ session ID to start a second bot instance.\n` +
+            `Get session IDs: https://liam-scanner.onrender.com/pair\n\n` +
+            `📊 Running: *${instances.size} / ${MAX_INSTANCES}*\n\n${sig()}`
         );
     }
 
@@ -81,51 +225,58 @@ async function runInstance(sock, m, ctx) {
     if (!decoded) {
         return ctx.reply(
             `❌ *Invalid session ID format.*\n\n` +
-            `Expected: \`LIAM:~...\`\n\n` +
-            `Get a session ID from: https://liam-scanner.onrender.com/pair\n\n` +
-            `⚠️ You need a *DIFFERENT* phone number — not the same number this bot is running on.\n\n` +
-            `${sig()}`
+            `Expected format: \`LIAM:~...\`\n\n` +
+            `Get one at: https://liam-scanner.onrender.com/pair\n` +
+            `⚠️ Use a *different* phone number, not the same as this bot.\n\n${sig()}`
         );
     }
 
-    // ── Guard: prevent running the same number as the main bot ────────────
+    // Guard: same number as parent
     const mainNum  = (sock.user?.id || '').replace(/:\d+@.*/, '');
-    const childNum = (decoded?.me?.id || decoded?.me?.phone || '').replace(/:\d+@.*/, '').replace('@s.whatsapp.net', '');
+    const childNum = (decoded?.me?.id || decoded?.me?.phone || '')
+        .replace(/:\d+@.*/, '').replace('@s.whatsapp.net', '');
     if (childNum && mainNum && childNum === mainNum) {
         return ctx.reply(
             `❌ *Cannot run the same number twice!*\n\n` +
-            `This session ID belongs to *+${mainNum}* — the same number as the main bot.\n\n` +
-            `👉 You need to pair a *DIFFERENT* phone number:\n` +
-            `1. Open: https://liam-scanner.onrender.com/pair\n` +
-            `2. Enter a *different* phone number\n` +
-            `3. Copy the LIAM:~ session ID\n` +
-            `4. Run \`.run LIAM:~...\`\n\n` +
-            `${sig()}`
+            `This session belongs to *+${mainNum}* — the same as the main bot.\n\n` +
+            `👉 Pair a *different* phone number:\n` +
+            `1. https://liam-scanner.onrender.com/pair\n` +
+            `2. Enter a different number → copy LIAM:~\n` +
+            `3. \`.run LIAM:~...\`\n\n${sig()}`
         );
     }
 
-    // ── Session limit check ────────────────────────────────────────────
-    // 254743285563 and 254705483052 → max 6 sessions
-    // Any other number              → max 3 sessions
-    const auth          = require('../library/auth');
-    const senderNum     = (ctx.senderNum || '').replace(/\D/g,'');
-    const maxSessions   = auth.getSessionLimit(senderNum, config.sessionLimits?.default || 3);
-    const currentCount  = instances.size; // running sub-instances (main bot = not counted)
-
-    if (currentCount >= maxSessions) {
+    // Hard cap check
+    if (instances.size >= MAX_INSTANCES) {
         return ctx.reply(
-            `🚫 *Session Limit Reached*\n\n` +
-            `You can run a maximum of *${maxSessions} session(s)*.\n` +
-            `Currently running: *${currentCount}*\n\n` +
-            `Stop one first with \`.runstop <id>\`\n\n${sig()}`
+            `🚫 *Maximum session cap reached!*\n\n` +
+            `Hard limit: *${MAX_INSTANCES} instances*\n` +
+            `Running now: *${instances.size}*\n\n` +
+            `Stop one with \`.runstop <id>\` first.\n\n${sig()}`
         );
+    }
+
+    // Detect duplicate session (same creds already running)
+    for (const [id, inst] of instances) {
+        const existingCreds = path.join(inst.sessionDir || '', 'creds.json');
+        try {
+            const existing = JSON.parse(fs.readFileSync(existingCreds, 'utf8'));
+            const exNum = (existing?.me?.id || '').replace(/:\d+@.*/, '').replace('@s.whatsapp.net','');
+            if (exNum && childNum && exNum === childNum) {
+                return ctx.reply(
+                    `⚠️ *Session +${childNum} already running!*\n\n` +
+                    `Instance ID: \`${id}\`\n` +
+                    `Status: *${inst.status || 'online'}*\n\n` +
+                    `Use \`.runstop ${id}\` to stop it first.\n\n${sig()}`
+                );
+            }
+        } catch { /* no creds yet, skip */ }
     }
 
     const instanceId = `inst_${Date.now()}`;
     const sessionDir = path.join(__dirname, '..', 'sessions', instanceId);
     fs.mkdirSync(sessionDir, { recursive: true });
 
-    // Write creds.json for this instance (isolated directory)
     try {
         fs.writeFileSync(path.join(sessionDir, 'creds.json'), JSON.stringify(decoded));
     } catch(e) {
@@ -133,309 +284,185 @@ async function runInstance(sock, m, ctx) {
     }
 
     await react(sock, m, '🚀');
-    await ctx.reply(`⏳ *Spawning bot instance…*\n\`${instanceId}\`\n\n${sig()}`);
+    await ctx.reply(
+        `⏳ *Spawning bot instance…*\n\n` +
+        `🆔 \`${instanceId}\`\n` +
+        `📊 Slot: *${instances.size + 1} / ${MAX_INSTANCES}*\n\n${sig()}`
+    );
 
-    // ── Spawn child process with isolated session dir ──────────────────
-    const spawnChild = (isRestart = false) => {
-        const child = fork(path.join(__dirname, '..', 'index.js'), [], {
-            env: {
-                ...process.env,
-                LIAM_SESSION_DIR:    sessionDir,    // isolated session folder
-                LIAM_INSTANCE_ID:    instanceId,    // marks process as child
-                LIAM_PARENT_JID:     m.chat,        // report back to this chat
-                // ── Critical: clear parent's session env vars ──────────────
-                // Without this, the child inherits the panel's SESSION_ID and
-                // overwrites the child's own creds.json with the parent's session,
-                // causing duplicate-number connections and broken command handling.
-                SESSION_ID:          '',
-                LIAM_SESSION_ID:     '',
-                PAIR_NUMBER:         '',
-                PHONE_NUMBER:        '',
-                LIAM_NUMBER:         '',
-            },
-            detached: false,
-            silent:   true,
-        });
-
-        let started = false;
-        let exitCount = (instances.get(instanceId)?.exitCount || 0);
-
-        child.stdout?.on('data', d => {
-            const txt = d.toString().trim();
-            // Show child logs with prefix for debugging
-            if (txt) process.stdout.write(`[${instanceId}] ${txt}\n`);
-            if (txt.includes('ONLINE') || txt.includes('successfully connected')) started = true;
-        });
-        child.stderr?.on('data', d => {
-            const txt = d.toString().trim();
-            if (txt && !['EKEYTYPE','Bad MAC','rate-overlimit'].some(x => txt.includes(x))) {
-                process.stderr.write(`[${instanceId}] ${txt}\n`);
-            }
-        });
-
-        // IPC: child sends { type:'CONNECTED', number } when WhatsApp opens
-        child.on('message', async (msg) => {
-            if (msg.type === 'CONNECTED') {
-                started = true;
-                const existing = instances.get(instanceId) || {};
-                instances.set(instanceId, {
-                    ...existing,
-                    pid:       child.pid,
-                    child,
-                    num:       msg.number || '?',
-                    startedAt: existing.startedAt || Date.now(),
-                    exitCount,
-                });
-                if (!isRestart) {
-                    await sock.sendMessage(m.chat, {
-                        text: '✅ *Bot Instance Connected!*\n\n' +
-                              '🆔 ID: `' + instanceId + '`\n' +
-                              '📱 *Number: +' + (msg.number||'?') + '*\n' +
-                              '⚡ PID: ' + child.pid + '\n\n' +
-                              '━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-                              sig()
-                    }, { quoted: m });
-                } else {
-                    L.ok(`[${instanceId}] Reconnected (attempt #${exitCount}) as +${msg.number || '?'}`);
-                }
-            }
-        });
-
-        child.on('error', async (e) => {
-            await sock.sendMessage(m.chat,
-                { text: `❌ Instance error: ${e.message}\n\n${sig()}` },
-                { quoted: m }
-            ).catch(()=>{});
-        });
-
-        child.on('exit', (code, signal) => {
-            const inst = instances.get(instanceId);
-            // Logged-out or manually stopped → do NOT restart
-            if (!instances.has(instanceId) || signal === 'SIGTERM' || code === 1) {
-                instances.delete(instanceId);
-                L.warn(`[${instanceId}] Stopped (code=${code}, signal=${signal})`);
-                return;
-            }
-            exitCount++;
-            // Auto-restart on unexpected crash — up to 5 times
-            if (exitCount <= 5 && instances.has(instanceId)) {
-                const delay_ms = Math.min(5000 * exitCount, 30000);
-                L.warn(`[${instanceId}] Crashed (code=${code}). Auto-restarting in ${delay_ms/1000}s… (#${exitCount})`);
-                setTimeout(() => {
-                    if (instances.has(instanceId)) spawnChild(true);
-                }, delay_ms);
-            } else {
-                instances.delete(instanceId);
-                sock.sendMessage(m.chat, {
-                    text: `💀 *Instance \`${instanceId}\` permanently crashed* after ${exitCount} attempts.\n\nCheck your session ID.\n\n${sig()}`
-                }, { quoted: m }).catch(()=>{});
-            }
-        });
-
-        // Store placeholder immediately so session limit is counted
-        if (!instances.has(instanceId)) {
-            instances.set(instanceId, { pid: child.pid, child, num: '?', startedAt: Date.now(), exitCount: 0 });
-        } else {
-            const ex = instances.get(instanceId);
-            ex.pid   = child.pid;
-            ex.child = child;
-        }
-
-        // Timeout if not connected in 45s
-        setTimeout(() => {
-            if (!started && instances.get(instanceId)?.pid === child.pid) {
-                child.kill('SIGTERM');
-                if (!isRestart) {
-                    sock.sendMessage(m.chat, {
-                        text: `⏱️ Instance \`${instanceId}\` timed out — session may be expired.\n\n${sig()}`
-                    }, { quoted: m }).catch(()=>{});
-                }
-                instances.delete(instanceId);
-            }
-        }, 45000);
-
-        return child;
-    };
-
-    spawnChild(false);
+    spawnChild({ sock, m, instanceId, sessionDir, isRestart: false });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  .bridge <tg_token> — link Telegram bot
-// ─────────────────────────────────────────────────────────────────────────────
-async function runBridge(sock, m, ctx) {
+// ═════════════════════════════════════════════════════════════════════════════
+//  .runstop <id>
+// ═════════════════════════════════════════════════════════════════════════════
+async function runStop(sock, m, ctx) {
+    if (!ctx.isCreator) return ctx.reply(config.message.owner);
+    const id = ctx.args[0];
+    if (!id) return ctx.reply(`❓ Usage: *.runstop <instance_id>*\n\n${sig()}`);
+
+    const inst = instances.get(id);
+    if (!inst) return ctx.reply(`❌ Instance \`${id}\` not found.\n\nUse *.runlist* to see running instances.\n\n${sig()}`);
+
+    // Mark deleted BEFORE killing so exit handler skips auto-restart
+    instances.delete(id);
+    try { inst.child?.kill('SIGTERM'); } catch(_) {}
+
+    // Clean up session dir
+    try {
+        const sd = inst.sessionDir;
+        if (sd && fs.existsSync(sd)) fs.rmSync(sd, { recursive: true, force: true });
+    } catch(_) {}
+
+    await react(sock, m, '🛑');
+    ctx.reply(
+        `🛑 *Instance Stopped*\n\n` +
+        `🆔 \`${id}\`\n` +
+        `📱 +${inst.num || '?'}\n` +
+        `📊 Running: *${instances.size} / ${MAX_INSTANCES}*\n\n${sig()}`
+    );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  .runrestart <id>
+// ═════════════════════════════════════════════════════════════════════════════
+async function runRestart(sock, m, ctx) {
+    if (!ctx.isCreator) return ctx.reply(config.message.owner);
+    const id = ctx.args[0];
+    if (!id) return ctx.reply(`❓ Usage: *.runrestart <instance_id>*\n\n${sig()}`);
+
+    const inst = instances.get(id);
+    if (!inst) return ctx.reply(`❌ Instance \`${id}\` not found.\n\n${sig()}`);
+
+    // Kill current child without removing from registry
+    try { inst.child?.kill('SIGTERM'); } catch(_) {}
+    inst.exitCount = 0;
+    inst.status    = 'restarting';
+    instances.set(id, inst);
+
+    await react(sock, m, '🔄');
+    await ctx.reply(`🔄 *Restarting \`${id}\`…*\n\n${sig()}`);
+
+    setTimeout(() => {
+        spawnChild({ sock, m, instanceId: id, sessionDir: inst.sessionDir, isRestart: true });
+    }, 2000);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  .runlist
+// ═════════════════════════════════════════════════════════════════════════════
+async function runList(sock, m, ctx) {
     if (!ctx.isCreator) return ctx.reply(config.message.owner);
 
+    if (instances.size === 0) {
+        return ctx.reply(`📋 *No running instances.*\n\nStart one with *.run <session_id>*\n\n${sig()}`);
+    }
+
+    const lines = [];
+    let idx = 1;
+    for (const [id, inst] of instances) {
+        const upSec = inst.startedAt ? Math.floor((Date.now() - inst.startedAt)/1000) : 0;
+        const upStr = upSec >= 3600
+            ? `${Math.floor(upSec/3600)}h ${Math.floor(upSec%3600/60)}m`
+            : `${Math.floor(upSec/60)}m ${upSec%60}s`;
+        const statusIcon = {
+            online:     '🟢', starting: '🟡', restarting: '🔄',
+            crashed:    '🔴', stopped:   '⚫',
+        }[inst.status || 'online'] || '❓';
+        lines.push(
+            `${idx}. ${statusIcon} *+${inst.num || '?'}*\n` +
+            `   🆔 \`${id}\`\n` +
+            `   ⏱️ Up: ${upStr}  💥 Crashes: ${inst.exitCount || 0}`
+        );
+        idx++;
+    }
+
+    ctx.reply(
+        `📋 *Running Instances — LIAM EYES*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `📊 *${instances.size} / ${MAX_INSTANCES}* slots used\n\n` +
+        lines.join('\n\n') +
+        `\n\n${sig()}`
+    );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  .bridge <token>
+// ═════════════════════════════════════════════════════════════════════════════
+async function runBridge(sock, m, ctx) {
+    if (!ctx.isCreator) return ctx.reply(config.message.owner);
     const token = (ctx.args[0] || '').trim();
     if (!token || !token.startsWith('LIAM-BRIDGE-')) {
         return ctx.reply(
             `❓ *Usage:* \`.bridge <token>\`\n\n` +
-            `Get your token from the Telegram bot:\n` +
-            `Open @liameyesrelay_bot → send \`/watoken\`\n` +
-            `Then run: \`.bridge LIAM-BRIDGE-xxxx\`\n\n${sig()}`
+            `Get token from Telegram: @liameyesrelay_bot → /watoken\n` +
+            `Then: \`.bridge LIAM-BRIDGE-xxxx\`\n\n${sig()}`
         );
     }
-
     await react(sock, m, '🌉');
-
-    // Save token globally + to settings
-    bridge.token     = token;
+    bridge.token = token;
     bridge.connected = true;
     config.bridgeToken = token;
-
-    // Persist to settings.js
     try {
-        const settingsPath = path.join(__dirname, '..', 'settings', 'settings.js');
-        let src = fs.readFileSync(settingsPath, 'utf8');
-        src = src.replace(
-            /bridgeToken:\s*["'][^"']*["']/,
-            `bridgeToken: "${token}"`
-        );
-        fs.writeFileSync(settingsPath, src);
-    } catch(e) { /* non-fatal */ }
-
-    // Also update library/bridge.js runtime token
-    try {
-        const br = require('../library/bridge');
-        if (br.setToken) br.setToken(token);
+        const sp = path.join(__dirname, '..', 'settings', 'settings.js');
+        let src = fs.readFileSync(sp, 'utf8');
+        src = src.replace(/bridgeToken:\s*["'][^"']*["']/, `bridgeToken: "${token}"`);
+        fs.writeFileSync(sp, src);
     } catch(_) {}
-
+    try { const br = require('../library/bridge'); if (br.setToken) br.setToken(token); } catch(_) {}
     ctx.reply(
         `✅ *Telegram Bridge Connected!*\n\n` +
-        `🔑 Token: \`${token.slice(0,20)}...\`\n\n` +
-        `*Now set on Telegram bot:*\n` +
-        `\`WA_BRIDGE_TOKEN=${token}\`\n` +
-        `\`WA_BRIDGE_URL=http://your-server:3001\`\n\n` +
-        `Then restart Telegram bot. Messages will flow both ways in real-time! 🚀\n\n${sig()}`
+        `🔑 Token: \`${token.slice(0,20)}…\`\n\n` +
+        `_Messages from WA will now forward to Telegram_\n\n${sig()}`
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  .webconnect <url> — connect website dashboard
-// ─────────────────────────────────────────────────────────────────────────────
-async function runWebConnect(sock, m, ctx) {
+// ═════════════════════════════════════════════════════════════════════════════
+//  .webconnect <url>
+// ═════════════════════════════════════════════════════════════════════════════
+async function webConnect(sock, m, ctx) {
     if (!ctx.isCreator) return ctx.reply(config.message.owner);
-
     const url = (ctx.args[0] || '').trim();
     if (!url || !url.startsWith('http')) {
-        return ctx.reply(
-            `❓ *Usage:* \`.webconnect <url>\`\n\n` +
-            `Example: \`.webconnect https://about-that.vercel.app\`\n\n` +
-            `This connects the website dashboard to receive real-time events.\n\n${sig()}`
-        );
+        return ctx.reply(`❓ *Usage:* \`.webconnect <url>\`\n\nExample: \`.webconnect https://my-site.com/bridge\`\n\n${sig()}`);
     }
-
-    // Require bridge to be connected first
-    if (!bridge.connected && !config.bridgeToken) {
-        return ctx.reply(
-            `⚠️ *Connect Telegram bridge first!*\n\nRun \`.bridge <token>\` before connecting the website.\n\n${sig()}`
-        );
-    }
-
     await react(sock, m, '🌐');
-
     global._liamWebConnect = { url, connected: true };
-
-    // Persist URL to bridge module
-    try {
-        const br = require('../library/bridge');
-        if (br.setWebOrigin) br.setWebOrigin(url);
-    } catch(_) {}
-
-    ctx.reply(
-        `✅ *Website Dashboard Connected!*\n\n` +
-        `🌐 URL: ${url}\n` +
-        `🌉 Bridge: ${bridge.connected ? '✅ Active' : '⚠️ Not connected'}\n\n` +
-        `*What's connected:*\n` +
-        `• Real-time WA messages → website\n` +
-        `• Telegram messages → website\n` +
-        `• Status updates → all platforms\n\n` +
-        `Open the website dashboard to see live activity! 🔥\n\n${sig()}`
-    );
+    ctx.reply(`✅ *Web Bridge Connected!*\n\n🌐 \`${url}\`\n\n${sig()}`);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  .runstop <id> — stop instance
-// ─────────────────────────────────────────────────────────────────────────────
-async function runStop(sock, m, ctx) {
-    if (!ctx.isCreator) return ctx.reply(config.message.owner);
-
-    const id = ctx.args[0];
-    if (!id) return ctx.reply(`❓ Usage: \`.runstop <instance_id>\`\n\nGet IDs with \`.runlist\`\n\n${sig()}`);
-
-    const inst = instances.get(id);
-    if (!inst) return ctx.reply(`❌ No running instance with ID \`${id}\`\n\n${sig()}`);
-
-    try { inst.child.kill('SIGTERM'); } catch(_) {}
-    instances.delete(id);
-
-    await react(sock, m, '🛑');
-    ctx.reply(`✅ *Instance stopped:* \`${id}\`\n\n${sig()}`);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  .runlist — list all running instances
-// ─────────────────────────────────────────────────────────────────────────────
-async function runList(sock, m, ctx) {
-    if (!ctx.isCreator) return ctx.reply(config.message.owner);
-
-    const mainNum = (sock.user?.id || '').replace(/:\d+@.*/, '');
-
-    if (!instances.size) {
-        return ctx.reply(
-            `📋 *Running Instances*\n\n` +
-            `🤖 *Main Bot:* +${mainNum} ← Send commands HERE\n\n` +
-            `_No extra instances running yet._\n\n` +
-            `Start one: \`.run <session_id>\`\n` +
-            `Get session IDs: https://liam-scanner.onrender.com/pair\n\n` +
-            `${sig()}`
-        );
-    }
-
-    const lines = [
-        `📋 *Running Instances (${instances.size})*\n`,
-        `🤖 *Main Bot:* +${mainNum} ← send commands here\n`,
-    ];
-    for (const [id, inst] of instances) {
-        const uptime = Math.round((Date.now() - inst.startedAt) / 60000);
-        lines.push(
-            `━━━━━━━━━━━━━━\n` +
-            `🆔 \`${id}\`\n` +
-            `📱 *Number: +${inst.num}* ← send commands to THIS number\n` +
-            `⏱️ Up: ${uptime}m  •  PID: ${inst.pid}`
-        );
-    }
-    lines.push(`\n🛑 Stop: \`.runstop <id>\`\n\n${sig()}`);
-    ctx.reply(lines.join('\n'));
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  EXPORTS
-// ─────────────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+//  Plugin exports
+// ═════════════════════════════════════════════════════════════════════════════
 module.exports = [
     {
         command: 'run', category: 'multisession', owner: true,
-        description: 'Spawn a second bot instance via session ID',
+        description: 'Spawn a new bot instance (.run <LIAM:~session>)',
         execute: runInstance,
     },
     {
-        command: 'bridge', category: 'settings', owner: true,
-        description: 'Connect Telegram bot via bridge token',
-        execute: runBridge,
-    },
-    {
-        command: 'webconnect', category: 'settings', owner: true,
-        description: 'Connect website dashboard to bridge',
-        execute: runWebConnect,
-    },
-    {
         command: 'runstop', category: 'multisession', owner: true,
-        description: 'Stop a running bot instance',
+        description: 'Stop a running bot instance (.runstop <id>)',
         execute: runStop,
     },
     {
         command: 'runlist', category: 'multisession', owner: true,
         description: 'List all running bot instances',
         execute: runList,
+    },
+    {
+        command: 'runrestart', category: 'multisession', owner: true,
+        description: 'Force-restart a specific instance (.runrestart <id>)',
+        execute: runRestart,
+    },
+    {
+        command: 'bridge', category: 'multisession', owner: true,
+        description: 'Link Telegram bot (.bridge <LIAM-BRIDGE-token>)',
+        execute: runBridge,
+    },
+    {
+        command: 'webconnect', category: 'multisession', owner: true,
+        description: 'Connect website to bridge (.webconnect <url>)',
+        execute: webConnect,
     },
 ];

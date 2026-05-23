@@ -414,117 +414,18 @@ module.exports = [
 },
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  .update — check for updates
+//  .update — check for + apply GitHub updates
 // ─────────────────────────────────────────────────────────────────────────────
 {
     command: 'update', category: 'owner', owner: true,
     execute: async (sock, m, { isCreator, reply }) => {
         if (!isCreator) return reply(ownerErr);
         await sock.sendMessage(m.chat, { react: { text: '🔄', key: m.key } });
-
-        const fs    = require('fs');
-        const path  = require('path');
-        const https = require('https');
-        const { execSync, exec } = require('child_process');
-        const gh = config.github || 'https://github.com/Dialmw/LIAM-EYES-';
-        const repoPath = gh.replace('https://github.com/', '').replace(/\/$/, '');
-
-        try {
-            // ── Step 1: Fetch latest commit info ──────────────────────────────
-            const { data: commit } = await axios.get(
-                `https://api.github.com/repos/${repoPath}/commits/main`,
-                { headers: { 'User-Agent': 'LIAM-EYES-Bot', 'Accept': 'application/vnd.github.v3+json' }, timeout: 15000 }
-            );
-            const sha  = commit?.sha?.slice(0, 7) || '?';
-            const msg  = commit?.commit?.message?.split('\n')[0] || 'No message';
-            const date = commit?.commit?.committer?.date?.split('T')[0] || '?';
-            const author = commit?.commit?.author?.name || '?';
-
-            await reply(
-                `🔄 *Update Check*\n\n` +
-                `📌 *Latest:* \`${sha}\`\n` +
-                `📅 *Date:* ${date}\n` +
-                `👤 *By:* ${author}\n` +
-                `💬 *Commit:* ${msg}\n\n` +
-                `⏳ _Applying update..._\n\n${sig()}`
-            );
-
-            // ── Step 2: Try git pull first (fastest) ─────────────────────────
-            const isGit = fs.existsSync(path.join(process.cwd(), '.git'));
-            if (isGit) {
-                try {
-                    const out = execSync('git pull origin main --ff-only 2>&1', { cwd: process.cwd(), timeout: 30000 }).toString();
-                    if (out.includes('Already up to date')) {
-                        await sock.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-                        return reply(`✅ *Already up to date!*\n\n\`${sha}\` is the latest version.\n\n${sig()}`);
-                    }
-                    // Reinstall deps if package.json changed
-                    if (out.includes('package.json')) {
-                        execSync('npm install --production 2>&1', { cwd: process.cwd(), timeout: 60000 });
-                    }
-                    await sock.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-                    await reply(`✅ *Updated via git pull!*\n\n\`${sha}\` — ${msg}\n\n🔁 _Restarting bot..._\n\n${sig()}`);
-                    setTimeout(() => process.exit(0), 1500); // panel auto-restarts
-                    return;
-                } catch(ge) {
-                    // git pull failed — try ZIP method
-                }
-            }
-
-            // ── Step 3: Download ZIP from GitHub, extract updated files ───────
-            const zipUrl  = `https://github.com/${repoPath}/archive/refs/heads/main.zip`;
-            const zipDest = path.join(os.tmpdir(), `liam_update_${Date.now()}.zip`);
-            const extractDir = path.join(os.tmpdir(), `liam_extract_${Date.now()}`);
-
-            // Download ZIP
-            await new Promise((res, rej) => {
-                const file = fs.createWriteStream(zipDest);
-                https.get(zipUrl, { headers: { 'User-Agent': 'LIAM-EYES-Bot' } }, r => {
-                    if (r.statusCode === 302 || r.statusCode === 301) {
-                        https.get(r.headers.location, { headers: { 'User-Agent': 'LIAM-EYES-Bot' } }, r2 => {
-                            r2.pipe(file); file.on('finish', () => { file.close(); res(); }); file.on('error', rej);
-                        }).on('error', rej);
-                    } else { r.pipe(file); file.on('finish', () => { file.close(); res(); }); file.on('error', rej); }
-                }).on('error', rej);
-            });
-
-            // Extract
-            fs.mkdirSync(extractDir, { recursive: true });
-            execSync(`unzip -q "${zipDest}" -d "${extractDir}"`, { timeout: 30000 });
-            
-            // Find extracted folder
-            const extracted = fs.readdirSync(extractDir)[0];
-            const srcDir    = path.join(extractDir, extracted);
-            const dstDir    = process.cwd();
-
-            // Copy only JS files and settings (not sessions or node_modules)
-            const copyDir = (src, dst) => {
-                if (!fs.existsSync(dst)) fs.mkdirSync(dst, { recursive: true });
-                for (const item of fs.readdirSync(src)) {
-                    if (['node_modules','sessions','.git'].includes(item)) continue;
-                    const s = path.join(src, item), d = path.join(dst, item);
-                    if (fs.statSync(s).isDirectory()) copyDir(s, d);
-                    else fs.copyFileSync(s, d);
-                }
-            };
-            copyDir(srcDir, dstDir);
-
-            // Cleanup
-            try { fs.unlinkSync(zipDest); fs.rmSync(extractDir, { recursive: true, force: true }); } catch(_) {}
-
-            await sock.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-            await reply(`✅ *Files updated from GitHub!*\n\n\`${sha}\` — ${msg}\n\n🔁 _Restarting..._\n\n${sig()}`);
-            setTimeout(() => process.exit(0), 1500);
-
-        } catch(e) {
-            await sock.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-            reply(
-                `❌ *Update failed:* ${e.message.slice(0,100)}\n\n` +
-                `📦 *Manual update:*\n${gh}/archive/refs/heads/main.zip\n_Download ZIP, extract & upload to panel_\n\n${sig()}`
-            );
-        }
+        const { doUpdate } = require('../library/updater');
+        await doUpdate(sock, m, reply);
     }
 },
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  .repo — show bot repository info

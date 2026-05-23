@@ -983,6 +983,12 @@ _Anti-call is ON. Turn off with .anticall off_
     bridge.setSock(sock);
     bridge.startBridge();
 
+    // ── Auto-updater: check GitHub on startup + scheduled (parent only) ──
+    if (!IS_CHILD) {
+        const { startChecker } = require('./library/updater');
+        startChecker(sock);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────
     sock.public = cfg().status?.public ?? true;
 

@@ -1,5 +1,5 @@
 // ╔══════════════════════════════════════════════════════════════════════════╗
-// ║  𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒  — settings.js                                             ║
+// ║  𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒  — settings.js  (20-session edition)                       ║
 // ║  © 2025 Liam — All Rights Reserved                                      ║
 // ║  Unauthorized redistribution prohibited                                  ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
@@ -24,26 +24,26 @@ const settings = {
     ],
 
     // ── 🔗 SESSION LIMITS ─────────────────────────────────────────────────────
-    // 254743285563 and 254705483052: max 6 sessions (enforced in auth.js)
-    // All other numbers:              max 3 sessions
-    defaultSessionLimit: 3,
-    adminSessionLimit:   6,
+    // Hard cap: 20 simultaneous .run sessions (enforced in bridge_run.js + auth.js)
+    defaultSessionLimit: 20,
+    adminSessionLimit:   20,
 
     // ── 🗑️ ANTI-DELETE ────────────────────────────────────────────────────────
     antiDelete:       true,
-    // "owner" = send to bot owner's private DM (linked number) — DEFAULT & RECOMMENDED
-    // "same"  = reply in the same chat where the delete happened
-    // "private"/"group"/"both" = scope filters
+    // "owner" = send to bot owner's private DM  (RECOMMENDED)
+    // "same"  = reply in the same chat
+    // "private" / "group" / "both" = scope filters
     antiDeleteTarget: "owner",
 
     // ── 🌉 TELEGRAM BRIDGE ────────────────────────────────────────────────────
-    // Generate a token in Telegram bot with /watoken then paste here.
-    // Format: LIAM-BRIDGE-<random_string>
-    // Leave blank to disable the bridge.
     bridgeToken: "",
+    bridgePort:  3001,
 
-    // Bridge HTTP server port (used for realtime cross-bot messaging)
-    bridgePort: 3001,
+    // ── 🔄 AUTO-UPDATE ────────────────────────────────────────────────────────
+    // true  = silently auto-pull from GitHub every 48 h
+    // false = disable (still works via .update command)
+    autoUpdate:         true,
+    autoUpdateInterval: 48,   // hours between silent checks
 
     // ── ⚡ FEATURES ───────────────────────────────────────────────────────────
     features: {
@@ -70,6 +70,7 @@ const settings = {
         autoblock:       false,
         anticall:        false,
         antibug:         false,
+        keepalive:       true,
     },
 
     // ── 🌍 MODE ───────────────────────────────────────────────────────────────
@@ -82,11 +83,12 @@ const settings = {
     thumbUrl:    "https://i.imgur.com/ydt68aV.jpeg",
     tagline:     "👁️ Your Eyes in the WhatsApp World",
     channel:     "https://whatsapp.com/channel/0029VbBeZTc1t90aZjks9v2S",
+    autoJoinChannel: "https://whatsapp.com/channel/0029VbBeZTc1t90aZjks9v2S",
     pairingSite: "https://liam-scanner.onrender.com/pair",
     github:      "https://github.com/Dialmw/LIAM-EYES",
 
     // ── 🎨 MENU STYLE ─────────────────────────────────────────────────────────
-    menuStyle: 'fancy',  // fancy=RAVEN(default) | classic | list | cursive | numbered
+    menuStyle: 'fancy',
 
     // ── 😍 STATUS REACTION EMOJIS ─────────────────────────────────────────────
     statusReactEmojis: ["😍","🔥","💯","😘","🤩","❤️","👀","✨","🎯","🥰","💪","👑","🫶","💥"],
@@ -112,24 +114,18 @@ const settings = {
     api: {
         baseurl:     "https://hector-api.vercel.app/",
         apikey:      "hector",
-        // Optional: RapidAPI key for Songstats metadata enrichment
-        // Get one free at https://rapidapi.com/songstats/api/songstats
         rapidApiKey: process.env.RAPIDAPI_KEY || "",
     },
 
     // ── 🔐 GITHUB GATE ────────────────────────────────────────────────────────
-    // REQUIRED: Set your GitHub username.
-    // To deploy this bot you MUST:
-    //   1. Fork  → https://github.com/Dialmw/LIAM-EYES-
-    //   2. Star  → https://github.com/Dialmw/LIAM-EYES-
-    // The bot will refuse to start if these requirements are not met.
-    githubUsername: process.env.GITHUB_USERNAME || "",  // ← set GITHUB_USERNAME env var or paste your GitHub username here
-    githubRepo:     "LIAM-EYES-",           // do not change
-    githubOwner:    "Dialmw",               // do not change
-    githubGate:     true,                    // set false to skip (dev only)
+    githubUsername: process.env.GITHUB_USERNAME || "",
+    githubRepo:     "LIAM-EYES-",
+    githubOwner:    "Dialmw",
+    githubGate:     true,
 };
 
 module.exports = settings;
 
+// Hot-reload settings on file change (dev mode)
 let _f = require.resolve(__filename);
 require('fs').watchFile(_f, () => { require('fs').unwatchFile(_f); delete require.cache[_f]; require(_f); });
