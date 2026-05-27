@@ -35,7 +35,8 @@ const bridge    = global._liamBridge;
 if (!bridge.token && config.bridgeToken) bridge.token = config.bridgeToken;
 
 // ── Hard cap: 20 concurrent sub-instances ─────────────────────────────────
-const MAX_INSTANCES = 20;
+// ── Hard cap: 50 concurrent sub-instances ────────────────────────────────
+const MAX_INSTANCES = 50;
 
 // ── Session decode ─────────────────────────────────────────────────────────
 function decodeSession(sessionId) {
@@ -58,151 +59,218 @@ function instState(id) {
     return instances.get(id) || null;
 }
 
-// ── Spawn one child instance ───────────────────────────────────────────────
+// ── Spawn one child instance ──────────────────────────────────────────────
+// Stability design:
+//   • Staggered start (100ms×slot) prevents mass connection storms
+//   • Exponential back-off capped at 3 min (not 1 min) for 50-session load
+//   • MAX_RESTARTS bumped to 12 — Baileys sometimes needs >8 retries on flaky nets
+//   • startTimer extended to 90s — Render/Railway cold starts can be slow
+//   • Fatal exit codes (401 loggedOut, 403 badSession) skip restart entirely
+//   • Child stdout/stderr filtered for noise; important lines forwarded
+//   • sock.ws?.close() + ev.removeAllListeners() before any new fork attempt
+
+// Codes that mean the session is permanently dead — never restart
+const FATAL_EXIT_SIGNALS = new Set(['SIGKILL']); // kernel OOM
+const FATAL_STDOUT_PHRASES = [
+    'bad session file',       // 403
+    'device loggedout',       // 401
+    'logged out',             // 401
+    'multidevice not supported',
+];
+
 function spawnChild(opts) {
     const {
-        sock,          // parent WA socket (for DM feedback)
-        m,             // parent message (for DM feedback)
+        sock,
+        m,
         instanceId,
         sessionDir,
         isRestart = false,
     } = opts;
 
-    const child = fork(path.join(__dirname, '..', 'index.js'), [], {
-        env: {
-            ...process.env,
-            LIAM_SESSION_DIR: sessionDir,
-            LIAM_INSTANCE_ID: instanceId,
-            LIAM_PARENT_JID:  m?.chat || '',
-            // Clear parent session vars so child never inherits them
-            SESSION_ID:       '',
-            LIAM_SESSION_ID:  '',
-            PAIR_NUMBER:      '',
-            PHONE_NUMBER:     '',
-            LIAM_NUMBER:      '',
-        },
-        detached: false,
-        silent:   true,
-    });
+    // ── Stagger: delay start by (slot index × 150ms) to avoid auth flood ──
+    const slotIndex = instances.size;
+    const staggerMs = isRestart ? 0 : slotIndex * 150;
 
-    const inst = instances.get(instanceId) || {};
-    let started   = false;
-    let exitCount = inst.exitCount || 0;
-    let startTimer;
+    const _doSpawn = () => {
+        const child = fork(path.join(__dirname, '..', 'index.js'), [], {
+            env: {
+                ...process.env,
+                LIAM_SESSION_DIR: sessionDir,
+                LIAM_INSTANCE_ID: instanceId,
+                LIAM_PARENT_JID:  m?.chat || '',
+                // ── Clear ALL parent session vars — child must be isolated ──
+                SESSION_ID:       '',
+                LIAM_SESSION_ID:  '',
+                PAIR_NUMBER:      '',
+                PHONE_NUMBER:     '',
+                LIAM_NUMBER:      '',
+                // ── Increase Node.js heap for large multi-session deployments ──
+                NODE_OPTIONS:     (process.env.NODE_OPTIONS || '') + ' --max-old-space-size=512',
+            },
+            detached: false,
+            silent:   true,
+        });
 
-    // ── stdout pipe ──────────────────────────────────────────────────────
-    child.stdout?.on('data', d => {
-        const txt = d.toString().trim();
-        if (txt) process.stdout.write(`[${instanceId}] ${txt}\n`);
-        if (!started && (txt.includes('ONLINE') || txt.includes('successfully connected')))
+        const inst      = instances.get(instanceId) || {};
+        let started     = false;
+        let fatalSeen   = false;
+        let exitCount   = inst.exitCount || 0;
+        let startTimer;
+
+        const NOISE = [
+            'EKEYTYPE','Bad MAC','rate-overlimit','item-not-found',
+            'Socket connection timeout','write EPIPE','read ECONNRESET',
+            'ECONNRESET','EPIPE','unexpected server response',
+        ];
+
+        // ── stdout: watch for ONLINE signal and fatal phrases ─────────────
+        child.stdout?.on('data', d => {
+            const txt = d.toString();
+            const lines = txt.split('\n').map(l => l.trim()).filter(Boolean);
+            for (const line of lines) {
+                process.stdout.write(`[${instanceId}] ${line}\n`);
+                if (!started && (line.includes('ONLINE') || line.includes('successfully connected') || line.includes('IS NOW ONLINE')))
+                    started = true;
+                if (FATAL_STDOUT_PHRASES.some(p => line.toLowerCase().includes(p)))
+                    fatalSeen = true;
+            }
+        });
+
+        child.stderr?.on('data', d => {
+            const txt = d.toString();
+            const lines = txt.split('\n').map(l => l.trim()).filter(Boolean);
+            for (const line of lines) {
+                if (!NOISE.some(x => line.includes(x)))
+                    process.stderr.write(`[${instanceId}] ERR: ${line}\n`);
+            }
+        });
+
+        // ── IPC: child sends CONNECTED once WhatsApp socket is open ──────
+        child.on('message', async msg => {
+            if (msg.type !== 'CONNECTED') return;
             started = true;
-    });
-    child.stderr?.on('data', d => {
-        const txt = d.toString().trim();
-        const NOISE = ['EKEYTYPE','Bad MAC','rate-overlimit','item-not-found','Socket connection timeout'];
-        if (txt && !NOISE.some(x => txt.includes(x)))
-            process.stderr.write(`[${instanceId}] ${txt}\n`);
-    });
+            clearTimeout(startTimer);
+            const existing = instances.get(instanceId) || {};
+            instances.set(instanceId, {
+                ...existing,
+                pid:        child.pid,
+                child,
+                num:        msg.number || '?',
+                startedAt:  existing.startedAt || Date.now(),
+                sessionDir,
+                exitCount,
+                status:     'online',
+            });
+            if (!isRestart && sock && m) {
+                await sock.sendMessage(m.chat, {
+                    text:
+                        `✅ *Bot Instance Connected!*\n\n` +
+                        `🆔 ID   : \`${instanceId}\`\n` +
+                        `📱 Num  : *+${msg.number || '?'}*\n` +
+                        `⚡ PID  : ${child.pid}\n` +
+                        `📊 Total: *${instances.size} / ${MAX_INSTANCES}*\n\n` +
+                        `━━━━━━━━━━━━━━━━━━━━━━\n\n${sig()}`
+                }, { quoted: m }).catch(() => {});
+            } else if (isRestart) {
+                L.ok(`[${instanceId}] Reconnected (#${exitCount}) as +${msg.number || '?'}`);
+            }
+        });
 
-    // ── IPC: child reports CONNECTED ──────────────────────────────────────
-    child.on('message', async msg => {
-        if (msg.type !== 'CONNECTED') return;
-        started = true;
-        clearTimeout(startTimer);
-        const existing = instances.get(instanceId) || {};
+        // ── child process error (fork failure) ────────────────────────────
+        child.on('error', async e => {
+            L.err(`[${instanceId}] fork error: ${e.message}`);
+            if (!isRestart && sock && m)
+                sock.sendMessage(m.chat, { text: `❌ Instance fork error: ${e.message}\n\n${sig()}` }, { quoted: m }).catch(() => {});
+        });
+
+        // ── child exit ────────────────────────────────────────────────────
+        child.on('exit', (code, signal) => {
+            clearTimeout(startTimer);
+            const current = instances.get(instanceId);
+
+            // ── Intentional stop (.runstop / SIGTERM) ─────────────────────
+            if (!instances.has(instanceId) || signal === 'SIGTERM') {
+                instances.delete(instanceId);
+                L.warn(`[${instanceId}] Stopped cleanly (code=${code} sig=${signal})`);
+                return;
+            }
+
+            // ── Fatal session (logged out / bad session) — never restart ──
+            if (fatalSeen || code === 1 && fatalSeen) {
+                instances.delete(instanceId);
+                L.err(`[${instanceId}] Fatal session error — not restarting (logged out / bad session).`);
+                if (sock && m)
+                    sock.sendMessage(m.chat, {
+                        text: `⛔ *Instance \`${instanceId}\` has a dead session.*\n\nLogged out or bad session — re-pair this number.\n\n${sig()}`
+                    }, { quoted: m }).catch(() => {});
+                return;
+            }
+
+            // ── OOM kill — don't spam restarts ────────────────────────────
+            if (FATAL_EXIT_SIGNALS.has(signal)) {
+                instances.delete(instanceId);
+                L.err(`[${instanceId}] Killed by OS (${signal}) — likely OOM. Not restarting.`);
+                return;
+            }
+
+            exitCount++;
+            instances.set(instanceId, { ...current, status: 'crashed', exitCount, child: null, pid: null });
+
+            // ── Auto-restart with exponential back-off ────────────────────
+            // 12 attempts, cap at 3 min — enough to survive long WA server outages
+            const MAX_RESTARTS = 12;
+            if (exitCount <= MAX_RESTARTS) {
+                const delay_ms = Math.min(3000 * Math.pow(1.7, exitCount - 1), 180000);
+                L.warn(`[${instanceId}] Exited (code=${code}). Restart in ${(delay_ms/1000).toFixed(0)}s (attempt ${exitCount}/${MAX_RESTARTS})`);
+                setTimeout(() => {
+                    if (!instances.has(instanceId)) return; // was stopped while waiting
+                    instances.set(instanceId, { ...instances.get(instanceId), status: 'restarting' });
+                    spawnChild({ sock, m, instanceId, sessionDir, isRestart: true });
+                }, delay_ms);
+            } else {
+                instances.delete(instanceId);
+                L.err(`[${instanceId}] Permanently failed after ${exitCount} restarts`);
+                if (sock && m)
+                    sock.sendMessage(m.chat, {
+                        text: `💀 *Instance \`${instanceId}\` gave up after ${exitCount} restarts.*\n\nCheck the session or re-pair.\n\n${sig()}`
+                    }, { quoted: m }).catch(() => {});
+            }
+        });
+
+        // Update registry immediately
         instances.set(instanceId, {
-            ...existing,
+            ...(instances.get(instanceId) || {}),
             pid:        child.pid,
             child,
-            num:        msg.number || '?',
-            startedAt:  existing.startedAt || Date.now(),
+            num:        (instances.get(instanceId) || {}).num || '?',
+            startedAt:  (instances.get(instanceId) || {}).startedAt || Date.now(),
             sessionDir,
             exitCount,
-            status:     'online',
+            status:     'starting',
         });
-        if (!isRestart && sock && m) {
-            await sock.sendMessage(m.chat, {
-                text:
-                    `✅ *Bot Instance Connected!*\n\n` +
-                    `🆔 ID   : \`${instanceId}\`\n` +
-                    `📱 Num  : *+${msg.number || '?'}*\n` +
-                    `⚡ PID  : ${child.pid}\n` +
-                    `📊 Total: *${instances.size} / ${MAX_INSTANCES}*\n\n` +
-                    `━━━━━━━━━━━━━━━━━━━━━━\n\n${sig()}`
-            }, { quoted: m }).catch(()=>{});
-        } else if (isRestart) {
-            L.ok(`[${instanceId}] Reconnected (#${exitCount}) as +${msg.number || '?'}`);
-        }
-    });
 
-    // ── child error ───────────────────────────────────────────────────────
-    child.on('error', async e => {
-        L.err(`[${instanceId}] fork error: ${e.message}`);
-        if (!isRestart && sock && m)
-            sock.sendMessage(m.chat, { text:`❌ Instance error: ${e.message}\n\n${sig()}` }, { quoted: m }).catch(()=>{});
-    });
+        // ── Startup timeout: 90s (cold starts on free-tier can be slow) ──
+        startTimer = setTimeout(() => {
+            if (!started) {
+                L.warn(`[${instanceId}] Startup timeout (90s) — session may be expired.`);
+                child.kill('SIGTERM');
+                instances.delete(instanceId);
+                if (!isRestart && sock && m)
+                    sock.sendMessage(m.chat, {
+                        text: `⏱️ Instance \`${instanceId}\` timed out after 90s — session may be expired.\n\n${sig()}`
+                    }, { quoted: m }).catch(() => {});
+            }
+        }, 90000);
 
-    // ── child exit ────────────────────────────────────────────────────────
-    child.on('exit', (code, signal) => {
-        clearTimeout(startTimer);
-        const inst = instances.get(instanceId);
+        return child;
+    };
 
-        // Manual stop via SIGTERM or .runstop
-        if (!instances.has(instanceId) || signal === 'SIGTERM') {
-            instances.delete(instanceId);
-            L.warn(`[${instanceId}] Stopped cleanly (code=${code} sig=${signal})`);
-            return;
-        }
-
-        exitCount++;
-        instances.set(instanceId, { ...inst, status:'crashed', exitCount, child: null, pid: null });
-
-        // Auto-restart with exponential back-off — up to 8 attempts
-        const MAX_RESTARTS = 8;
-        if (exitCount <= MAX_RESTARTS) {
-            const delay_ms = Math.min(2000 * Math.pow(1.8, exitCount - 1), 60000);
-            L.warn(`[${instanceId}] Exited (code=${code}). Restart in ${(delay_ms/1000).toFixed(1)}s (attempt ${exitCount}/${MAX_RESTARTS})`);
-            setTimeout(() => {
-                if (instances.has(instanceId)) {
-                    instances.set(instanceId, { ...instances.get(instanceId), status:'restarting' });
-                    spawnChild({ sock, m, instanceId, sessionDir, isRestart: true });
-                }
-            }, delay_ms);
-        } else {
-            instances.delete(instanceId);
-            L.err(`[${instanceId}] Permanently failed after ${exitCount} restarts`);
-            if (sock && m)
-                sock.sendMessage(m.chat, {
-                    text: `💀 *Instance \`${instanceId}\` permanently crashed*\n\nAfter ${exitCount} restart attempts — check your session.\n\n${sig()}`
-                }, { quoted: m }).catch(()=>{});
-        }
-    });
-
-    // Update registry immediately
-    instances.set(instanceId, {
-        ...(instances.get(instanceId) || {}),
-        pid:        child.pid,
-        child,
-        num:        inst.num || '?',
-        startedAt:  inst.startedAt || Date.now(),
-        sessionDir,
-        exitCount,
-        status:     'starting',
-    });
-
-    // Timeout if not connected in 60s
-    startTimer = setTimeout(() => {
-        if (!started) {
-            child.kill('SIGTERM');
-            instances.delete(instanceId);
-            if (!isRestart && sock && m)
-                sock.sendMessage(m.chat, {
-                    text: `⏱️ Instance \`${instanceId}\` timed out — session may be expired.\n\n${sig()}`
-                }, { quoted: m }).catch(()=>{});
-        }
-    }, 60000);
-
-    return child;
+    // ── Stagger the actual fork to avoid auth flood ───────────────────────
+    if (staggerMs > 0) {
+        setTimeout(_doSpawn, staggerMs);
+    } else {
+        _doSpawn();
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

@@ -25,8 +25,15 @@ const bridge = require('./library/bridge');
 const IGNORED = ['Socket connection timeout','EKEYTYPE','item-not-found',
     'rate-overlimit','Connection Closed','Timed Out','Value not found','Bad MAC',
     'unexpected server response','write EPIPE','read ECONNRESET'];
-process.on('uncaughtException',  e => { if (!IGNORED.some(x => String(e).includes(x))) console.error(e); });
-process.on('unhandledRejection', e => { if (!IGNORED.some(x => String(e).includes(x))) {} });
+process.on('uncaughtException', e => {
+    const s = String(e?.message || e);
+    if (!IGNORED.some(x => s.includes(x))) console.error('[CRASH] uncaughtException:', e);
+    // Do NOT exit — keep the process alive for child instances
+});
+process.on('unhandledRejection', e => {
+    const s = String(e?.message || e?.reason || e);
+    if (!IGNORED.some(x => s.includes(x))) console.error('[CRASH] unhandledRejection:', e);
+});
 const _ce = console.error;
 console.error = (m, ...a) => { if (typeof m === 'string' && IGNORED.some(x => m.includes(x))) return; _ce(m, ...a); };
 
@@ -34,7 +41,8 @@ console.error = (m, ...a) => { if (typeof m === 'string' && IGNORED.some(x => m.
 // One reconnect attempt at a time; exponential back-off up to 30s
 let _restartPending = false;
 let _restartCount   = 0;
-const _restartDelay = () => Math.min(3000 * Math.pow(1.5, _restartCount), 30000);
+// Back-off: 5s, 9s, 14s, 21s … cap 120s — gentler for 50 simultaneous sessions
+const _restartDelay = () => Math.min(5000 * Math.pow(1.5, _restartCount), 120000);
 
 // ── Instance mode: child process spawned by .run uses its own session dir ─
 const IS_CHILD   = !!process.env.LIAM_INSTANCE_ID;
@@ -423,10 +431,16 @@ const clientstart = async () => {
         browser:                        Browsers.macOS('Safari'),
         syncFullHistory:                false,
         generateHighQualityLinkPreview: false,
-        connectTimeoutMs:               30000,
-        keepAliveIntervalMs:            10000,
-        defaultQueryTimeoutMs:          5000,
-        retryRequestDelayMs:            50,
+        // ── Stability tuning for 50+ sessions ──────────────────────────────
+        connectTimeoutMs:               60000,   // was 30s — more time for slow links
+        keepAliveIntervalMs:            25000,   // was 10s — less noise on server
+        defaultQueryTimeoutMs:          20000,   // was 5s — avoid spurious timeouts
+        retryRequestDelayMs:            250,     // was 50ms — reduce burst retries
+        maxMsgRetryCount:               5,       // cap message retry storms
+        fireInitQueries:                true,    // ensure session fully hydrated
+        emitOwnEvents:                  true,    // consistent event stream
+        markOnlineOnConnect:            false,   // avoids presence storms on mass connect
+        transactionOpts:                { maxCommitRetries: 10, delayBetweenTriesMs: 3000 },
         getMessage:                     async (key) => msgs.get(`${key.remoteJid}:${key.id}`)?.message || undefined,
     });
 
@@ -579,35 +593,55 @@ const clientstart = async () => {
         if (connection === 'close') {
             const code = lastDisconnect?.error?.output?.statusCode;
             STATS.reconnects++;
-            L.err(`Disconnected — code ${code} (reconnect #${STATS.reconnects})`);
-            if (code !== DisconnectReason.loggedOut) {
-                // ── Restart guard: only one reconnect attempt at a time ──
-                if (_restartPending) {
-                    L.warn('Reconnect already scheduled — skipping duplicate.');
-                    return;
+
+            // ── Fatal codes — session is dead, do not reconnect ──────────────
+            const FATAL = new Set([
+                DisconnectReason.loggedOut,       // 401 — user logged out
+                DisconnectReason.badSession,      // 403 — corrupted/banned session
+                DisconnectReason.connectionReplaced, // 500 — another device took over
+            ]);
+
+            if (FATAL.has(code)) {
+                if (code === DisconnectReason.loggedOut) {
+                    L.err(`Logged out (401). Delete ${SESSION_BASE}/ and re-pair.`);
+                } else if (code === DisconnectReason.badSession) {
+                    L.err(`Bad session (403). Delete ${SESSION_BASE}/ and re-pair.`);
+                } else {
+                    L.err(`Connection replaced (500) — another session took over. Exiting.`);
                 }
-                _restartPending = true;
-                _restartCount++;
-                const delay_ms = _restartDelay();
-                L.warn(`Reconnecting in ${(delay_ms/1000).toFixed(1)}s… (attempt #${_restartCount})`);
-                setTimeout(() => {
-                    _restartPending = false;
-                    try { sock.ev.removeAllListeners(); } catch(_) {}
-                    try { sock.end(undefined); } catch(_) {}
-                    // If too many reconnect attempts, do a full process restart
-                    if (_restartCount > 10) {
-                        L.warn('Too many reconnects — doing hard restart');
-                        process.exit(1);
-                    }
-                    clientstart().catch(() => {
-                        // clientstart itself threw — hard restart
-                        setTimeout(() => process.exit(1), 1000);
-                    });
-                }, delay_ms);
-            } else {
-                L.err(`Logged out. Delete ${SESSION_BASE}/ and restart.`);
                 process.exit(1);
+                return;
             }
+
+            L.err(`Disconnected — code ${code} (reconnect #${STATS.reconnects})`);
+
+            // ── Restart guard: only one reconnect attempt at a time ──────────
+            if (_restartPending) {
+                L.warn('Reconnect already scheduled — skipping duplicate.');
+                return;
+            }
+            _restartPending = true;
+            _restartCount++;
+            const delay_ms = _restartDelay();
+            L.warn(`Reconnecting in ${(delay_ms/1000).toFixed(1)}s… (attempt #${_restartCount})`);
+
+            setTimeout(() => {
+                _restartPending = false;
+                // ── Clean up old socket before spawning new one ──────────────
+                try { sock.ev.removeAllListeners(); } catch (_) {}
+                try { sock.ws?.close(); } catch (_) {}
+                try { sock.end(undefined); } catch (_) {}
+
+                // Hard restart after 15 consecutive failures (child exits; parent pm2/render restarts)
+                if (_restartCount > 15) {
+                    L.warn('15 consecutive reconnect failures — hard restart');
+                    process.exit(1);
+                }
+                clientstart().catch(e => {
+                    L.err('clientstart threw: ' + (e?.message || e));
+                    setTimeout(() => process.exit(1), 1000);
+                });
+            }, delay_ms);
         }
     });
 
