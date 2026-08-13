@@ -2,14 +2,18 @@
     "name": "liam-eyes-bot",
     "version": "1.0.0-alpha",
     "description": "LIAM EYES WhatsApp Bot — Alpha by Liam",
-    "main": "index.js",
+    "main": "start.js",
     "type": "commonjs",
     "scripts": {
-        "start": "node index.js",
-        "pm2":   "pm2 start index.js --name LIAM-EYES"
+        "start": "node start.js",
+        "bot":   "node index.js",
+        "pm2":   "pm2 start start.js --name LIAM-EYES"
     },
     "author": "Liam",
     "license": "MIT",
+    "engines": {
+        "node": ">=18.0.0"
+    },
     "dependencies": {
         "@ffmpeg-installer/ffmpeg": "^1.1.0",
         "@hapi/boom":              "^10.0.1",

@@ -1,0 +1,36 @@
+{
+    "name": "LIAM EYES",
+    "description": "👁️ LIAM EYES — WhatsApp Bot by Liam",
+    "repository": "https://github.com/Dialmw/LIAM-EYES",
+    "logo": "https://i.imgur.com/ydt68aV.jpeg",
+    "keywords": ["whatsapp", "bot", "baileys", "nodejs"],
+    "success_url": "/",
+    "stack": "heroku-22",
+    "env": {
+        "GITHUB_USERNAME": {
+            "description": "Your GitHub username (only needed if you re-enable the fork+star gate in settings.js)",
+            "required": false
+        },
+        "SESSION_ID": {
+            "description": "WhatsApp session ID (LIAM:~...) — alternative to pasting it into settings.js",
+            "required": false
+        },
+        "BRIDGE_TOKEN": {
+            "description": "Telegram bridge token, if you use the .bridge feature",
+            "required": false
+        },
+        "RAPIDAPI_KEY": {
+            "description": "RapidAPI key for API-dependent commands",
+            "required": false
+        }
+    },
+    "formation": {
+        "web": {
+            "quantity": 1,
+            "size": "basic"
+        }
+    },
+    "buildpacks": [
+        { "url": "heroku/nodejs" }
+    ]
+}

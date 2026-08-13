@@ -1,0 +1,28 @@
+{
+    "name": "LIAM EYES",
+    "type": "nodejs",
+    "runtime": "node18",
+    "entrypoint": "start.js",
+    "install": "npm install",
+    "start": "node start.js",
+    "port": {
+        "expose": true,
+        "env_var": "PORT",
+        "default": 3000
+    },
+    "env": {
+        "SESSION_ID":       { "required": false, "description": "WhatsApp session ID (LIAM:~...)" },
+        "PAIR_NUMBER":      { "required": false, "description": "Phone number to auto-request a pairing code on boot" },
+        "GITHUB_USERNAME":  { "required": false, "description": "Only needed if you re-enable the GitHub fork+star gate in settings.js" },
+        "BRIDGE_TOKEN":     { "required": false, "description": "Telegram bridge token for .bridge" },
+        "RAPIDAPI_KEY":     { "required": false, "description": "RapidAPI key for API-backed commands" }
+    },
+    "persistent": [
+        "sessions",
+        "Resources"
+    ],
+    "healthcheck": {
+        "path": "/",
+        "expected_status": 200
+    }
+}
