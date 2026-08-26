@@ -63,7 +63,8 @@ const settings = {
     adminSessionLimit:   20,
 
     // ── 🗑️ ANTI-DELETE ────────────────────────────────────────────────────────
-    antiDelete:       true,
+    // OFF by default — turn on with .antidelete on, or flip these.
+    antiDelete:       false,
     // "owner" = send to bot owner's private DM  (RECOMMENDED)
     // "same"  = reply in the same chat
     // "private" / "group" / "both" = scope filters
@@ -81,13 +82,13 @@ const settings = {
 
     // ── ⚡ FEATURES ───────────────────────────────────────────────────────────
     features: {
-        antidelete:      true,
-        antideletestatus:true,
+        antidelete:      false,
+        antideletestatus:false,
         antiedit:        false,
         antiviewonce:    false,
-        autoviewstatus:  false,
+        autoviewstatus:  true,
         autosavestatus:  false,
-        autoreactstatus: false,
+        autoreactstatus: true,
         alwaysonline:    false,
         autoread:        false,
         chatbot:         false,
@@ -151,6 +152,11 @@ const settings = {
         rapidApiKey: process.env.RAPIDAPI_KEY || "",
     },
 
+    // ── 🖥️ WEB DASHBOARD ──────────────────────────────────────────────────────
+    // Controls the page served at your Render URL. CHANGE THIS before deploying —
+    // anyone with this password can read and send WhatsApp messages through it.
+    dashboardPassword: process.env.DASHBOARD_PASSWORD || "change-me-now",
+
     // ── 🔐 GITHUB GATE ────────────────────────────────────────────────────────
     // Set to false to disable the fork+star startup gate entirely.
     githubUsername: process.env.GITHUB_USERNAME || "",
@@ -211,6 +217,7 @@ const config = {
     pairingSite: S.pairingSite || 'https://liam-eyes-pair.onrender.com/pair',
     github:      S.github      || 'https://github.com/Dialmw/LIAM-EYES',
     menuStyle:   S.menuStyle   || 1,
+    dashboardPassword: S.dashboardPassword || 'change-me-now',
     autoBio:     S.autoBio     || false,
     autoBioText: S.autoBioText || '👁️ LIAM EYES | {time}',
     // Raw settings + github gate fields (read directly by index.js at boot)

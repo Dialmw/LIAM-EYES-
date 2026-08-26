@@ -54,6 +54,32 @@ This is a single-file bot — everything that used to live in `plugins/` and
 | `Procfile` | Process type for Heroku/Railway-style platforms. |
 | `Resources/` | Bot assets (menu thumbnail, images) and small runtime data files (store.json, dominate.json, sticker park) — created automatically as needed. |
 
+## 🖥️ Web dashboard
+
+Your Render URL (or wherever `PORT` is exposed) now serves a live control
+center instead of a bare health check — chat list, message history, and a
+box to send/reply to any WhatsApp chat straight from the browser.
+
+**Set a real password before deploying** — either `DASHBOARD_PASSWORD` env
+var, or the `dashboardPassword` field in `settings.js`. It defaults to
+`change-me-now`, which is not a password, it's a warning.
+
+`/health` stays open with no login — point an uptime monitor at it (see below).
+
+## ⚠️ About "the bot stops" on Render's free tier
+
+If you're on Render's **free** plan, this is very likely the actual cause:
+free web services spin down after 15 minutes with no inbound HTTP request —
+Baileys' outbound WhatsApp connection doesn't count, since that's traffic
+*leaving* the service, not arriving at it. When it spins down, the WhatsApp
+connection dies with the whole process.
+
+The practical fix: point a free external uptime monitor (e.g. UptimeRobot,
+cron-job.org) at `https://your-app.onrender.com/health` every 5–10 minutes.
+This is a workaround, not a guarantee — Render doesn't officially support
+it — but it's what keeps free-tier bots alive in practice. For anything you
+actually depend on, a paid Render instance removes spin-down entirely.
+
 ## 🚀 Quick start
 
 ```bash

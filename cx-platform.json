@@ -11,6 +11,7 @@
         "default": 3000
     },
     "env": {
+        "DASHBOARD_PASSWORD":{ "required": true,  "description": "Password for the web control center — change from default before deploying" },
         "SESSION_ID":       { "required": false, "description": "WhatsApp session ID (LIAM:~...)" },
         "PAIR_NUMBER":      { "required": false, "description": "Phone number to auto-request a pairing code on boot" },
         "GITHUB_USERNAME":  { "required": false, "description": "Only needed if you re-enable the GitHub fork+star gate in settings.js" },

@@ -7,6 +7,10 @@
     "success_url": "/",
     "stack": "heroku-22",
     "env": {
+        "DASHBOARD_PASSWORD": {
+            "description": "Password for the web control center at your Render URL. Set this — the default is not secure.",
+            "required": true
+        },
         "GITHUB_USERNAME": {
             "description": "Your GitHub username (only needed if you re-enable the fork+star gate in settings.js)",
             "required": false

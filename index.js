@@ -502,6 +502,320 @@ module.exports = {
 
 };
 
+// ── module: library/dashboard_ui.js ────────────────────────────────────────
+__bundleModules["library/dashboard_ui"] = function(module, exports) {
+const __dirname = __ROOT_DIRNAME__;
+function dashboardHTML() {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>👁️ LIAM EYES — Control Center</title>
+<style>
+    :root {
+        --bg: #060a14; --panel: #0d1424; --panel2: #111a30; --border: #1c2942;
+        --accent: #00d4ff; --accent2: #7c5cff; --text: #e6ecf5; --dim: #7787a3;
+        --ok: #00e08a; --warn: #ffb020; --err: #ff4d6d;
+    }
+    * { box-sizing: border-box; }
+    body {
+        margin: 0; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        background: radial-gradient(ellipse at top, #0c1830 0%, var(--bg) 60%);
+        color: var(--text); min-height: 100vh; overflow-x: hidden;
+    }
+    .bg-glow {
+        position: fixed; inset: 0; pointer-events: none; z-index: 0;
+        background:
+            radial-gradient(600px circle at 15% 10%, rgba(0,212,255,0.08), transparent 40%),
+            radial-gradient(500px circle at 85% 30%, rgba(124,92,255,0.08), transparent 40%);
+        animation: drift 20s ease-in-out infinite alternate;
+    }
+    @keyframes drift { from { opacity: .6; } to { opacity: 1; } }
+    header {
+        position: relative; z-index: 1; padding: 22px 28px; display: flex;
+        align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+        border-bottom: 1px solid var(--border); backdrop-filter: blur(8px);
+        animation: fadeDown .5s ease;
+    }
+    @keyframes fadeDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+    .brand { display: flex; align-items: center; gap: 12px; font-size: 22px; font-weight: 700; letter-spacing: .5px; }
+    .brand .eye { font-size: 26px; filter: drop-shadow(0 0 8px var(--accent)); animation: blink 4s ease-in-out infinite; }
+    @keyframes blink { 0%,90%,100% { transform: scaleY(1); } 95% { transform: scaleY(0.1); } }
+    .brand span.grad {
+        background: linear-gradient(90deg, var(--accent), var(--accent2));
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .status-pill {
+        display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 999px;
+        background: var(--panel); border: 1px solid var(--border); font-size: 13px; transition: all .3s ease;
+    }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); transition: background .3s ease; }
+    .dot.online { background: var(--ok); box-shadow: 0 0 10px var(--ok); animation: pulse 2s ease-in-out infinite; }
+    .dot.offline { background: var(--err); box-shadow: 0 0 10px var(--err); }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+
+    main { position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; padding: 28px; }
+
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 26px; }
+    .card {
+        background: linear-gradient(145deg, var(--panel), var(--panel2)); border: 1px solid var(--border);
+        border-radius: 14px; padding: 18px; transition: transform .25s ease, border-color .25s ease;
+        animation: fadeUp .5s ease backwards;
+    }
+    .card:hover { transform: translateY(-3px); border-color: var(--accent); }
+    .card .label { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 6px; }
+    .card .value { font-size: 26px; font-weight: 700; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    .card:nth-child(1){animation-delay:.05s} .card:nth-child(2){animation-delay:.1s}
+    .card:nth-child(3){animation-delay:.15s} .card:nth-child(4){animation-delay:.2s}
+    .card:nth-child(5){animation-delay:.25s}
+
+    .grid { display: grid; grid-template-columns: 300px 1fr; gap: 20px; height: 560px; }
+    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; height: auto; } }
+
+    .panel {
+        background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+        display: flex; flex-direction: column; overflow: hidden; animation: fadeUp .6s ease .3s backwards;
+    }
+    .panel-head { padding: 14px 18px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 14px; color: var(--dim); }
+    .chat-list { overflow-y: auto; flex: 1; }
+    .chat-item {
+        padding: 13px 18px; cursor: pointer; border-bottom: 1px solid var(--border);
+        transition: background .2s ease, padding-left .2s ease; display: flex; justify-content: space-between; gap: 8px;
+    }
+    .chat-item:hover { background: rgba(0,212,255,0.06); padding-left: 22px; }
+    .chat-item.active { background: rgba(0,212,255,0.1); border-left: 3px solid var(--accent); }
+    .chat-name { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px; }
+    .chat-preview { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px; margin-top: 2px; }
+    .chat-time { font-size: 10px; color: var(--dim); white-space: nowrap; }
+    .empty-hint { padding: 30px 18px; color: var(--dim); font-size: 13px; text-align: center; line-height: 1.6; }
+
+    .thread { flex: 1; display: flex; flex-direction: column; }
+    .thread-head { padding: 14px 18px; border-bottom: 1px solid var(--border); font-weight: 600; }
+    .messages { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+    .bubble {
+        max-width: 70%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.45;
+        animation: pop .25s ease backwards; word-wrap: break-word;
+    }
+    @keyframes pop { from { opacity: 0; transform: scale(.92); } to { opacity: 1; transform: scale(1); } }
+    .bubble.in  { align-self: flex-start; background: var(--panel2); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+    .bubble.out { align-self: flex-end; background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #04101f; border-bottom-right-radius: 4px; font-weight: 500; }
+    .bubble .meta { font-size: 10px; opacity: .6; margin-top: 4px; }
+
+    .composer { display: flex; gap: 10px; padding: 14px 18px; border-top: 1px solid var(--border); }
+    .composer input {
+        flex: 1; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
+        padding: 12px 14px; color: var(--text); font-size: 14px; outline: none; transition: border-color .2s ease;
+    }
+    .composer input:focus { border-color: var(--accent); }
+    .composer button, .btn {
+        background: linear-gradient(135deg, var(--accent), var(--accent2)); border: none; border-radius: 10px;
+        padding: 0 22px; color: #04101f; font-weight: 700; cursor: pointer; font-size: 14px;
+        transition: transform .15s ease, box-shadow .15s ease;
+    }
+    .composer button:hover, .btn:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,212,255,0.25); }
+    .composer button:active, .btn:active { transform: translateY(0); }
+    .composer button:disabled { opacity: .5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+    footer { text-align: center; padding: 26px; color: var(--dim); font-size: 12px; }
+    .toast {
+        position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
+        background: var(--panel2); border: 1px solid var(--accent); padding: 10px 20px; border-radius: 10px;
+        font-size: 13px; opacity: 0; transition: all .3s ease; pointer-events: none; z-index: 50;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+<div class="bg-glow"></div>
+<header>
+    <div class="brand"><span class="eye">👁️</span><span class="grad">LIAM EYES</span> Control Center</div>
+    <div class="status-pill"><span class="dot" id="dot"></span><span id="statusText">Connecting…</span></div>
+</header>
+<main>
+    <div class="stats" id="stats"></div>
+    <div class="grid">
+        <div class="panel">
+            <div class="panel-head">💬 Recent Chats</div>
+            <div class="chat-list" id="chatList"><div class="empty-hint">Loading chats…</div></div>
+        </div>
+        <div class="panel thread">
+            <div class="thread-head" id="threadHead">Select a chat</div>
+            <div class="messages" id="messages"><div class="empty-hint">Pick a chat on the left, or send a fresh message below by typing a full JID.</div></div>
+            <div class="composer">
+                <input id="jidInput" placeholder="Chat JID (e.g. 2547xxxxxxxx@s.whatsapp.net)" />
+                <input id="textInput" placeholder="Type a reply…" style="flex:2" />
+                <button id="sendBtn" onclick="sendMsg()">Send</button>
+            </div>
+        </div>
+    </div>
+</main>
+<footer>👁️ LIAM EYES — Your Eyes in the WhatsApp World</footer>
+<div class="toast" id="toast"></div>
+
+<script>
+let currentJid = null;
+let chats = [];
+
+function fmtUptime(s) {
+    const d=~~(s/86400),h=~~(s%86400/3600),m=~~(s%3600/60),sec=~~(s%60);
+    return d>0 ? \`\${d}d \${h}h \${m}m\` : h>0 ? \`\${h}h \${m}m \${sec}s\` : \`\${m}m \${sec}s\`;
+}
+function fmtTime(ts) {
+    const d = new Date(ts);
+    return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+}
+function toast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+async function refreshStatus() {
+    try {
+        const r = await fetch('/api/status'); const d = await r.json();
+        document.getElementById('dot').className = 'dot ' + (d.online ? 'online' : 'offline');
+        document.getElementById('statusText').textContent = d.online ? ('Online — ' + (d.name||'')) : 'Reconnecting…';
+        document.getElementById('stats').innerHTML = \`
+            <div class="card"><div class="label">Uptime</div><div class="value">\${fmtUptime(d.uptime)}</div></div>
+            <div class="card"><div class="label">Messages In</div><div class="value">\${d.messagesIn}</div></div>
+            <div class="card"><div class="label">Commands Run</div><div class="value">\${d.cmdsProcessed}</div></div>
+            <div class="card"><div class="label">Reconnects</div><div class="value">\${d.reconnects}</div></div>
+            <div class="card"><div class="label">RAM</div><div class="value">\${d.ramMB} MB</div></div>
+        \`;
+    } catch(e) {}
+}
+
+async function refreshChats() {
+    try {
+        const r = await fetch('/api/chats'); chats = await r.json();
+        const list = document.getElementById('chatList');
+        if (!chats.length) { list.innerHTML = '<div class="empty-hint">No conversations yet.<br>They\\'ll show up here as messages arrive.</div>'; return; }
+        list.innerHTML = chats.map(c => \`
+            <div class="chat-item \${c.jid===currentJid?'active':''}" onclick="openChat('\${c.jid}')">
+                <div>
+                    <div class="chat-name">\${c.isGroup ? '👥 ' : ''}\${escapeHtml(c.name)}</div>
+                    <div class="chat-preview">\${escapeHtml(c.preview||'')}</div>
+                </div>
+                <div class="chat-time">\${fmtTime(c.lastActivity)}</div>
+            </div>
+        \`).join('');
+    } catch(e) {}
+}
+
+function escapeHtml(s) { const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
+
+async function openChat(jid) {
+    currentJid = jid;
+    document.getElementById('jidInput').value = jid;
+    refreshChats();
+    try {
+        const r = await fetch('/api/chat?jid=' + encodeURIComponent(jid));
+        const d = await r.json();
+        document.getElementById('threadHead').textContent = (d.isGroup ? '👥 ' : '') + (d.name || jid);
+        const box = document.getElementById('messages');
+        if (!d.messages || !d.messages.length) { box.innerHTML = '<div class="empty-hint">No messages yet.</div>'; return; }
+        box.innerHTML = d.messages.map((m,i) => \`
+            <div class="bubble \${m.fromMe?'out':'in'}" style="animation-delay:\${Math.min(i*0.02,0.4)}s">
+                \${escapeHtml(m.text)}
+                <div class="meta">\${m.fromMe?'':escapeHtml(m.sender)+' · '}\${fmtTime(m.ts)}</div>
+            </div>
+        \`).join('');
+        box.scrollTop = box.scrollHeight;
+    } catch(e) {}
+}
+
+async function sendMsg() {
+    const jid = document.getElementById('jidInput').value.trim();
+    const text = document.getElementById('textInput').value.trim();
+    if (!jid || !text) { toast('Enter a JID and a message'); return; }
+    const btn = document.getElementById('sendBtn');
+    btn.disabled = true;
+    try {
+        const r = await fetch('/api/send', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ jid, text })
+        });
+        const d = await r.json();
+        if (d.ok) {
+            document.getElementById('textInput').value = '';
+            toast('✅ Sent');
+            currentJid = jid;
+            openChat(jid);
+        } else { toast('❌ ' + (d.error || 'Send failed')); }
+    } catch(e) { toast('❌ Network error'); }
+    btn.disabled = false;
+}
+
+document.getElementById('textInput').addEventListener('keydown', e => { if (e.key === 'Enter') sendMsg(); });
+
+refreshStatus(); refreshChats();
+setInterval(refreshStatus, 4000);
+setInterval(refreshChats, 5000);
+setInterval(() => { if (currentJid) openChat(currentJid); }, 6000);
+</script>
+</body>
+</html>`;
+}
+
+function loginHTML(error) {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>👁️ LIAM EYES — Login</title>
+<style>
+    body {
+        margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        background: radial-gradient(ellipse at center, #0c1830 0%, #060a14 70%); color: #e6ecf5;
+    }
+    .box {
+        background: #0d1424; border: 1px solid #1c2942; border-radius: 18px; padding: 40px 36px;
+        width: 320px; text-align: center; animation: rise .5s ease;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+    @keyframes rise { from { opacity: 0; transform: translateY(20px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+    .eye { font-size: 42px; margin-bottom: 6px; filter: drop-shadow(0 0 12px #00d4ff); }
+    h1 { font-size: 20px; margin: 0 0 4px; background: linear-gradient(90deg,#00d4ff,#7c5cff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    p { color: #7787a3; font-size: 13px; margin: 0 0 24px; }
+    input {
+        width: 100%; padding: 13px 14px; border-radius: 10px; border: 1px solid #1c2942;
+        background: #111a30; color: #e6ecf5; font-size: 14px; outline: none; box-sizing: border-box;
+        transition: border-color .2s ease; margin-bottom: 14px;
+    }
+    input:focus { border-color: #00d4ff; }
+    button {
+        width: 100%; padding: 13px; border: none; border-radius: 10px; font-weight: 700; font-size: 14px;
+        background: linear-gradient(135deg,#00d4ff,#7c5cff); color: #04101f; cursor: pointer;
+        transition: transform .15s ease;
+    }
+    button:hover { transform: translateY(-1px); }
+    .err { color: #ff4d6d; font-size: 12px; margin-bottom: 14px; ${error ? '' : 'display:none;'} }
+</style>
+</head>
+<body>
+    <form class="box" method="POST" action="/login">
+        <div class="eye">👁️</div>
+        <h1>LIAM EYES</h1>
+        <p>Control Center Access</p>
+        <div class="err">Incorrect password</div>
+        <input type="password" name="password" placeholder="Password" autofocus required />
+        <button type="submit">Unlock</button>
+    </form>
+</body>
+</html>`;
+}
+
+module.exports = { dashboardHTML, loginHTML };
+
+};
+
 // ── module: library/dl.js ──────────────────────────────────────────────────
 __bundleModules["library/dl"] = function(module, exports) {
 const __dirname = __ROOT_DIRNAME__;
@@ -10440,16 +10754,149 @@ const cfg  = () => require('./settings');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const bridge = __bundleRequire('library/bridge');
 
-// ── Web service port binding (Render requires an open port) ─────
-// Only the main process binds — child instances (.run) don't need this
+// ── Web dashboard + port binding (Render requires an open port) ─
+// Only the main process serves the dashboard — child instances (.run) don't
 if (!process.env.LIAM_INSTANCE_ID) {
-    const http = require('http');
+    const http    = require('http');
+    const crypto  = require('crypto');
+    const { URL } = require('url');
+    const { dashboardHTML, loginHTML } = __bundleRequire('library/dashboard_ui');
+
     const PORT = process.env.PORT || 3000;
-    http.createServer((req, res) => {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok', bot: 'LIAM EYES', uptime: process.uptime() }));
+    const validTokens = new Set(); // in-memory sessions; reset on restart (fine — just log in again)
+
+    const readCookie = (req, name) => {
+        const raw = req.headers.cookie || '';
+        const m = raw.match(new RegExp('(?:^|; )' + name + '=([^;]+)'));
+        return m ? decodeURIComponent(m[1]) : null;
+    };
+    const isAuthed = req => {
+        const t = readCookie(req, 'liam_token');
+        return !!(t && validTokens.has(t));
+    };
+    const readBody = req => new Promise((resolve, reject) => {
+        let data = '';
+        req.on('data', c => { data += c; if (data.length > 1e6) req.destroy(); });
+        req.on('end', () => resolve(data));
+        req.on('error', reject);
+    });
+    const json = (res, code, obj) => {
+        res.writeHead(code, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(obj));
+    };
+    const html = (res, code, body) => {
+        res.writeHead(code, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(body);
+    };
+
+    http.createServer(async (req, res) => {
+        try {
+            const u = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+            const p = u.pathname;
+
+            // ── Unauthenticated: health check for Render / uptime pingers ──
+            if (p === '/health') {
+                return json(res, 200, { status: 'ok', bot: 'LIAM EYES', uptime: process.uptime() });
+            }
+
+            // ── Login ────────────────────────────────────────────────────
+            if (p === '/login' && req.method === 'GET') {
+                return html(res, 200, loginHTML(u.searchParams.get('error')));
+            }
+            if (p === '/login' && req.method === 'POST') {
+                const body = await readBody(req);
+                const params = new URLSearchParams(body);
+                const pw = params.get('password') || '';
+                const expected = cfg().dashboardPassword || 'change-me-now';
+                if (pw && pw === expected) {
+                    const token = crypto.randomBytes(24).toString('hex');
+                    validTokens.add(token);
+                    res.writeHead(302, {
+                        'Set-Cookie': `liam_token=${token}; HttpOnly; Path=/; Max-Age=${60 * 60 * 24 * 7}`,
+                        'Location': '/',
+                    });
+                    return res.end();
+                }
+                res.writeHead(302, { 'Location': '/login?error=1' });
+                return res.end();
+            }
+            if (p === '/logout') {
+                const t = readCookie(req, 'liam_token');
+                if (t) validTokens.delete(t);
+                res.writeHead(302, { 'Set-Cookie': 'liam_token=; Path=/; Max-Age=0', 'Location': '/login' });
+                return res.end();
+            }
+
+            // ── Everything below requires auth ──────────────────────────
+            if (!isAuthed(req)) {
+                if (p.startsWith('/api/')) return json(res, 401, { ok: false, error: 'Not authenticated' });
+                res.writeHead(302, { 'Location': '/login' });
+                return res.end();
+            }
+
+            if (p === '/' && req.method === 'GET') {
+                return html(res, 200, dashboardHTML());
+            }
+
+            if (p === '/api/status' && req.method === 'GET') {
+                const sock = global._waSocket;
+                return json(res, 200, {
+                    online: !!sock?.user,
+                    name: sock?.user?.name || '',
+                    uptime: process.uptime(),
+                    messagesIn: STATS.messagesIn,
+                    cmdsProcessed: STATS.cmdsProcessed,
+                    reconnects: STATS.reconnects,
+                    ramMB: (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1),
+                });
+            }
+
+            if (p === '/api/chats' && req.method === 'GET') {
+                const list = [...chatHistory.values()]
+                    .sort((a, b) => b.lastActivity - a.lastActivity)
+                    .map(c => ({
+                        jid: c.jid, name: c.name, isGroup: c.isGroup, lastActivity: c.lastActivity,
+                        preview: c.messages[c.messages.length - 1]?.text || '',
+                    }));
+                return json(res, 200, list);
+            }
+
+            if (p === '/api/chat' && req.method === 'GET') {
+                const jid = u.searchParams.get('jid') || '';
+                const chat = chatHistory.get(jid);
+                if (!chat) return json(res, 200, { jid, name: jid.split('@')[0], isGroup: jid.endsWith('@g.us'), messages: [] });
+                return json(res, 200, chat);
+            }
+
+            if (p === '/api/send' && req.method === 'POST') {
+                const body = await readBody(req);
+                let payload = {};
+                try { payload = JSON.parse(body); } catch (_) {}
+                const jid = (payload.jid || '').trim();
+                const text = (payload.text || '').trim();
+                if (!jid || !text) return json(res, 400, { ok: false, error: 'jid and text are required' });
+                const sock = global._waSocket;
+                if (!sock?.user) return json(res, 503, { ok: false, error: 'Bot is not connected right now' });
+                try {
+                    const targetJid = jid.includes('@') ? jid : `${jid.replace(/\D/g, '')}@s.whatsapp.net`;
+                    await sock.sendMessage(targetJid, { text });
+                    recordChatMessage(null, {
+                        key: { remoteJid: targetJid, fromMe: true, id: 'dash_' + Date.now() },
+                        message: { conversation: text },
+                        messageTimestamp: Math.floor(Date.now() / 1000),
+                    });
+                    return json(res, 200, { ok: true });
+                } catch (e) {
+                    return json(res, 500, { ok: false, error: e?.message || 'Send failed' });
+                }
+            }
+
+            html(res, 404, '<h1>404</h1>');
+        } catch (e) {
+            try { json(res, 500, { ok: false, error: 'Internal error' }); } catch (_) {}
+        }
     }).listen(PORT, () => {
-        console.log(`[SERVER] Listening on port ${PORT} (Render port scan satisfied)`);
+        console.log(`[SERVER] Dashboard listening on port ${PORT}`);
     });
 }
 
@@ -10486,6 +10933,51 @@ const SESSION_BASE = process.env.LIAM_SESSION_DIR ||
 
 // ── Runtime stats tracker ────────────────────────────────────────
 const STATS = { cmdsProcessed: 0, messagesIn: 0, reconnects: 0, startTime: Date.now() };
+
+// ── Dashboard chat history (shared across reconnects) ────────────
+// jid -> { jid, name, isGroup, messages: [{fromMe,sender,text,ts}], lastActivity }
+const chatHistory = new Map();
+const CHAT_HISTORY_LIMIT = 60; // messages kept per chat
+const CHAT_LIST_LIMIT    = 40; // chats kept total
+function _extractText(msg) {
+    if (!msg) return '';
+    return msg.conversation
+        || msg.extendedTextMessage?.text
+        || msg.imageMessage?.caption
+        || msg.videoMessage?.caption
+        || (msg.imageMessage    ? '📷 Photo'    : '')
+        || (msg.videoMessage    ? '🎥 Video'    : '')
+        || (msg.audioMessage    ? '🎵 Audio'    : '')
+        || (msg.stickerMessage  ? '🌟 Sticker'  : '')
+        || (msg.documentMessage ? '📄 ' + (msg.documentMessage.fileName || 'Document') : '')
+        || '';
+}
+function recordChatMessage(m, mek) {
+    const jid = mek.key?.remoteJid;
+    if (!jid || jid === 'status@broadcast') return;
+    const text = _extractText(mek.message);
+    if (!text) return;
+    let chat = chatHistory.get(jid);
+    if (!chat) {
+        chat = { jid, name: jid.split('@')[0], isGroup: jid.endsWith('@g.us'), messages: [], lastActivity: 0 };
+        chatHistory.set(jid, chat);
+    }
+    if (!mek.key.fromMe && mek.pushName) chat.name = mek.pushName;
+    chat.messages.push({
+        fromMe: !!mek.key.fromMe,
+        sender: mek.key.fromMe ? 'You' : (mek.pushName || chat.name),
+        text,
+        ts: mek.messageTimestamp ? Number(mek.messageTimestamp) * 1000 : Date.now(),
+    });
+    if (chat.messages.length > CHAT_HISTORY_LIMIT) chat.messages.shift();
+    chat.lastActivity = Date.now();
+    if (chatHistory.size > CHAT_LIST_LIMIT) {
+        let oldestJid = null, oldestTs = Infinity;
+        for (const [j, c] of chatHistory) { if (c.lastActivity < oldestTs) { oldestTs = c.lastActivity; oldestJid = j; } }
+        if (oldestJid) chatHistory.delete(oldestJid);
+    }
+}
+global._chatHistory = chatHistory;
 
 // ── Timestamp helper ─────────────────────────────────────────────
 const ts = () => chalk.hex('#636e72')(`[${new Date().toLocaleTimeString('en-US', { hour12: false })}]`);
@@ -10835,7 +11327,7 @@ const clientstart = async () => {
             L.warn('║  Option A — Set environment variable:                ║');
             L.warn('║    SESSION_ID = LIAM:~your_session_id_here            ║');
             L.warn('║                                                       ║');
-            L.warn('║  Option B — Edit settings/settings.js:               ║');
+            L.warn('║  Option B — Edit settings.js:                        ║');
             L.warn('║    sessionId: "LIAM:~your_session_id_here"            ║');
             L.warn('║                                                       ║');
             L.warn('║  Option C — Set phone number to pair:                ║');
@@ -10881,6 +11373,13 @@ const clientstart = async () => {
     const nameCache  = new Map(); // senderNum → pushName for anti-delete
     const mediaCache = new Map(); // msgKey → Buffer (pre-downloaded media for anti-delete)
     const loadMessage = async (jid, id) => msgs.get(`${jid}:${id}`) || null;
+
+    // Expose the live socket + name cache globally so the dashboard server
+    // (set up before this function ever runs) and keepalive.js can reach the
+    // *current* socket even across reconnects (this function re-runs on every
+    // reconnect and re-assigns these each time).
+    global._waSocket   = sock;
+    global._nameCache  = nameCache;
 
     // Helper — download & cache media for anti-delete
     const preCacheMedia = async (mek) => {
@@ -10989,7 +11488,7 @@ const clientstart = async () => {
                                 `⚠️ *Never share it with anyone*\n\n` +
                                 `📌 *Steps:*\n` +
                                 `1️⃣ Copy the LIAM:~ text above\n` +
-                                `2️⃣ Open \`settings/settings.js\`\n` +
+                                `2️⃣ Open \`settings.js\`\n` +
                                 `3️⃣ Paste into \`sessionId: "..."\`\n` +
                                 `4️⃣ Restart — \`npm start\`\n\n` +
                                 `👁️ _Your Eyes in the WhatsApp World_`,
@@ -11175,6 +11674,10 @@ const clientstart = async () => {
 
             const { smsg } = __bundleRequire('library/serialize');
             const m = await smsg(sock, mek, { loadMessage });
+
+            // ── Dashboard chat history (text-only, capped) ───────────────
+            try { recordChatMessage(m, mek); } catch (_) {}
+
             __bundleRequire('message')(sock, m, { messages, type }, { loadMessage });
         } catch (e) { if (!IGNORED.some(x => String(e).includes(x))) console.error(e); }
     });
