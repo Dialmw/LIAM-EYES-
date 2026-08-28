@@ -629,13 +629,52 @@ function dashboardHTML() {
         font-size: 13px; opacity: 0; transition: all .3s ease; pointer-events: none; z-index: 50;
     }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    .modal-backdrop {
+        position: fixed; inset: 0; background: rgba(2,6,16,0.7); backdrop-filter: blur(4px);
+        display: flex; align-items: center; justify-content: center; z-index: 100;
+        opacity: 0; pointer-events: none; transition: opacity .25s ease;
+    }
+    .modal-backdrop.show { opacity: 1; pointer-events: auto; }
+    .modal {
+        background: var(--panel); border: 1px solid var(--border); border-radius: 18px;
+        width: min(680px, 92vw); max-height: 80vh; display: flex; flex-direction: column;
+        transform: translateY(16px) scale(.97); transition: transform .25s ease; overflow: hidden;
+    }
+    .modal-backdrop.show .modal { transform: translateY(0) scale(1); }
+    .modal-head { padding: 18px 22px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .modal-head h2 { margin: 0; font-size: 17px; }
+    .modal-head input {
+        flex: 1; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+        padding: 9px 12px; color: var(--text); font-size: 13px; outline: none;
+    }
+    .modal-head input:focus { border-color: var(--accent); }
+    .modal-close { background: none; border: none; color: var(--dim); font-size: 20px; cursor: pointer; line-height: 1; padding: 4px; }
+    .modal-close:hover { color: var(--text); }
+    .modal-body { overflow-y: auto; padding: 10px 22px 22px; }
+    .cmd-cat { margin-top: 16px; }
+    .cmd-cat:first-child { margin-top: 6px; }
+    .cmd-cat-title { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 8px; }
+    .cmd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+    .cmd-chip {
+        background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+        font-size: 12.5px; cursor: pointer; transition: border-color .15s ease, transform .15s ease;
+        animation: pop .2s ease backwards;
+    }
+    .cmd-chip:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .cmd-chip .name { font-weight: 700; color: var(--accent); }
+    .cmd-chip .desc { color: var(--dim); font-size: 11px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cmd-chip .owner-tag { font-size: 9px; color: var(--warn); margin-left: 4px; }
 </style>
 </head>
 <body>
 <div class="bg-glow"></div>
 <header>
     <div class="brand"><span class="eye">👁️</span><span class="grad">LIAM EYES</span> Control Center</div>
-    <div class="status-pill"><span class="dot" id="dot"></span><span id="statusText">Connecting…</span></div>
+    <div style="display:flex;align-items:center;gap:12px;">
+        <button class="btn" onclick="openCommands()">⌘ Commands</button>
+        <div class="status-pill"><span class="dot" id="dot"></span><span id="statusText">Connecting…</span></div>
+    </div>
 </header>
 <main>
     <div class="stats" id="stats"></div>
@@ -657,6 +696,17 @@ function dashboardHTML() {
 </main>
 <footer>👁️ LIAM EYES — Your Eyes in the WhatsApp World</footer>
 <div class="toast" id="toast"></div>
+
+<div class="modal-backdrop" id="cmdModal" onclick="if(event.target===this) closeCommands()">
+    <div class="modal">
+        <div class="modal-head">
+            <h2>⌘ Commands</h2>
+            <input id="cmdSearch" placeholder="Search commands…" oninput="renderCommands()" />
+            <button class="modal-close" onclick="closeCommands()">✕</button>
+        </div>
+        <div class="modal-body" id="cmdBody"><div class="empty-hint">Loading…</div></div>
+    </div>
+</div>
 
 <script>
 let currentJid = null;
@@ -754,10 +804,61 @@ async function sendMsg() {
 
 document.getElementById('textInput').addEventListener('keydown', e => { if (e.key === 'Enter') sendMsg(); });
 
+// ── Commands panel ────────────────────────────────────────────────────
+let commandData = null;
+async function openCommands() {
+    document.getElementById('cmdModal').classList.add('show');
+    if (!commandData) {
+        try { const r = await fetch('/api/commands'); commandData = await r.json(); }
+        catch (e) { commandData = { categories: [] }; }
+    }
+    renderCommands();
+}
+function closeCommands() { document.getElementById('cmdModal').classList.remove('show'); }
+function renderCommands() {
+    if (!commandData) return;
+    const q = (document.getElementById('cmdSearch').value || '').toLowerCase();
+    const body = document.getElementById('cmdBody');
+    const cats = commandData.categories
+        .map(c => ({ ...c, commands: c.commands.filter(cmd => !q || cmd.name.toLowerCase().includes(q) || (cmd.description||'').toLowerCase().includes(q)) }))
+        .filter(c => c.commands.length);
+    if (!cats.length) { body.innerHTML = '<div class="empty-hint">No commands match.</div>'; return; }
+    body.innerHTML = cats.map(c => \`
+        <div class="cmd-cat">
+            <div class="cmd-cat-title">\${c.emoji} \${c.label} (\${c.commands.length})</div>
+            <div class="cmd-grid">
+                \${c.commands.map((cmd,i) => \`
+                    <div class="cmd-chip" style="animation-delay:\${Math.min(i*0.015,0.3)}s" onclick="useCommand('\${cmd.name}')">
+                        <div class="name">\${cmd.name}\${cmd.owner ? '<span class=\\'owner-tag\\'>OWNER</span>' : ''}</div>
+                        \${cmd.description ? \`<div class="desc">\${escapeHtml(cmd.description)}</div>\` : ''}
+                    </div>
+                \`).join('')}
+            </div>
+        </div>
+    \`).join('');
+}
+function useCommand(name) {
+    const jid = document.getElementById('jidInput').value.trim();
+    document.getElementById('textInput').value = name + ' ';
+    closeCommands();
+    if (jid) document.getElementById('textInput').focus();
+    else toast('Pick a chat first, then send ' + name);
+}
+
+// ── Live updates via Server-Sent Events (push, not polling) ────────────
 refreshStatus(); refreshChats();
-setInterval(refreshStatus, 4000);
-setInterval(refreshChats, 5000);
-setInterval(() => { if (currentJid) openChat(currentJid); }, 6000);
+try {
+    const es = new EventSource('/api/events');
+    es.onmessage = () => {
+        refreshStatus();
+        refreshChats();
+        if (currentJid) openChat(currentJid);
+    };
+    es.onerror = () => { /* browser auto-reconnects; fallback poll below covers gaps */ };
+} catch (e) {}
+// Safety-net poll in case SSE is unsupported/blocked by a proxy
+setInterval(refreshStatus, 15000);
+setInterval(refreshChats, 15000);
 </script>
 </body>
 </html>`;
@@ -1027,11 +1128,21 @@ const api_ytdl_org = async (id) => {
 const firstSuccess = (fns, timeoutMs) => new Promise((resolve, reject) => {
     let done = false, pending = fns.length;
     const errs = [];
-    const timer = setTimeout(() => { if (!done) { done = true; reject(new Error('batch timeout')); } }, timeoutMs);
-    for (const fn of fns) {
+    const timer = setTimeout(() => { if (!done) { done = true; reject(new Error('batch timeout: ' + errs.join(' | '))); } }, timeoutMs);
+    for (const { name, fn } of fns) {
         Promise.resolve().then(fn)
-            .then(r => { if (!done && r?.url) { done = true; clearTimeout(timer); resolve(r); } else { pending--; if (pending === 0 && !done) reject(new Error('all failed')); } })
-            .catch(e => { errs.push(e.message); pending--; if (pending === 0 && !done) reject(new Error('all failed: ' + errs[0])); });
+            .then(r => {
+                if (!done && r?.url) { done = true; clearTimeout(timer); resolve(r); }
+                else {
+                    if (!done) { errs.push(`${name}: no result`); console.log(`  ✗ [music] ${name}: returned no usable url`); }
+                    pending--; if (pending === 0 && !done) { done = true; clearTimeout(timer); reject(new Error('all failed: ' + errs.join(' | '))); }
+                }
+            })
+            .catch(e => {
+                const msg = `${name}: ${e?.message || e}`;
+                if (!done) { errs.push(msg); console.log(`  ✗ [music] ${msg}`); }
+                pending--; if (pending === 0 && !done) { done = true; clearTimeout(timer); reject(new Error('all failed: ' + errs.join(' | '))); }
+            });
     }
 });
 
@@ -1040,38 +1151,42 @@ const dlAudio = async (ytUrl) => {
     if (!id && /^https?:\/\//i.test(ytUrl)) return { url: ytUrl, title: 'audio', thumb: '' };
     if (!id) throw new Error('Invalid YouTube URL');
 
-    // Batch 1: fastest (parallel, 16s window)
+    // Batch 1: fastest (parallel, 12s window)
     try {
         const r = await firstSuccess([
-            () => api_cobalt(ytUrl),
-            () => api_piped(id),
-            () => api_ndown(id),
-        ], 16000);
+            { name: 'cobalt', fn: () => api_cobalt(ytUrl) },
+            { name: 'piped',  fn: () => api_piped(id) },
+            { name: 'ndown',  fn: () => api_ndown(id) },
+        ], 12000);
         if (r?.url) { console.log('  ✔ [music] batch-1'); return { ...r, thumb: '' }; }
-    } catch (_) {}
+    } catch (e) { console.log(`  [music] batch-1 exhausted: ${e.message}`); }
 
-    // Batch 2: medium (parallel, 22s window)
+    // Batch 2: medium (parallel, 15s window)
     try {
         const r = await firstSuccess([
-            () => api_inv(id),
-            () => api_y2mate(ytUrl, id),
-            () => api_yt1s(id),
-        ], 22000);
+            { name: 'invidious', fn: () => api_inv(id) },
+            { name: 'y2mate',    fn: () => api_y2mate(ytUrl, id) },
+            { name: 'yt1s',      fn: () => api_yt1s(id) },
+        ], 15000);
         if (r?.url) { console.log('  ✔ [music] batch-2'); return { ...r, thumb: '' }; }
-    } catch (_) {}
+    } catch (e) { console.log(`  [music] batch-2 exhausted: ${e.message}`); }
 
-    // Batch 3: last resort (parallel, 28s window)
+    // Batch 3: last resort (parallel, 15s window)
     try {
         const r = await firstSuccess([
-            () => api_fabdl(id),
-            () => api_mp3dl(id),
-            () => api_loaderto(id),
-            () => api_ytdl_org(id),
-        ], 28000);
+            { name: 'fabdl',    fn: () => api_fabdl(id) },
+            { name: 'mp3dl',    fn: () => api_mp3dl(id) },
+            { name: 'loaderto', fn: () => api_loaderto(id) },
+            { name: 'ytdlorg',  fn: () => api_ytdl_org(id) },
+        ], 15000);
         if (r?.url) { console.log('  ✔ [music] batch-3'); return { ...r, thumb: '' }; }
-    } catch (_) {}
+    } catch (e) { console.log(`  [music] batch-3 exhausted: ${e.message}`); }
 
-    throw new Error('Music unavailable — all 10 APIs failed. Try again in 30 seconds.');
+    console.log('  ✖ [music] ALL 10 sources failed for', ytUrl);
+    console.log('  💡 [music] If this happens consistently, your host\'s IP is very likely rate-limited or');
+    console.log('     blocked by these free mirrors (common on Render/Heroku/AWS datacenter IPs since');
+    console.log('     YouTube\'s 2025 anti-bot rollout). Check the ✗ lines above for the real per-API errors.');
+    throw new Error('Music unavailable — all 10 sources failed. Check server logs for the specific errors.');
 };
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -7441,6 +7556,65 @@ module.exports = [
         }
     },
 
+    // ── .cc — send the control panel link ──────────────────────────────
+    {
+        command: 'cc', category: 'owner', owner: true, description: 'Get the web control panel link',
+        execute: async (sock, m, ctx) => {
+            if (!ctx.isCreator) return ctx.reply(config.message.owner);
+            const url =
+                process.env.RENDER_EXTERNAL_URL ||
+                config.dashboardUrl ||
+                (process.env.PORT ? `http://localhost:${process.env.PORT}` : null);
+            await sock.sendMessage(m.chat, { react: { text: '🖥️', key: m.key } }).catch(()=>{});
+            if (!url) {
+                return ctx.reply(
+                    `⚠️ *Couldn't detect your panel URL automatically*\n\n` +
+                    `If you're on Render this should be automatic — check your \`RENDER_EXTERNAL_URL\` env var.\n` +
+                    `On other hosts, set \`dashboardUrl\` in settings.js manually.\n\n${sig()}`
+                );
+            }
+            return ctx.reply(
+                `🖥️ *LIAM EYES Control Center*\n\n` +
+                `🔗 ${url}\n\n` +
+                `🔑 Password: set via *.setpass* or your \`DASHBOARD_PASSWORD\` env var\n\n` +
+                `_Keep this link private — anyone with the password can read and send your WhatsApp messages._\n\n${sig()}`
+            );
+        }
+    },
+
+    // ── .setpass — change the dashboard password ─────────────────────────
+    {
+        command: 'setpass', category: 'owner', owner: true, description: 'Set the web control panel password',
+        execute: async (sock, m, ctx) => {
+            if (!ctx.isCreator) return ctx.reply(config.message.owner);
+            const newPass = (ctx.args || []).join(' ').trim();
+            if (!newPass) {
+                return ctx.reply(`⚠️ *Usage:* .setpass <new password>\n\n${sig()}`);
+            }
+            if (newPass.length < 4) {
+                return ctx.reply(`⚠️ Password too short — use at least 4 characters.\n\n${sig()}`);
+            }
+            if (process.env.DASHBOARD_PASSWORD) {
+                return ctx.reply(
+                    `⚠️ *Can't change it from here* — your \`DASHBOARD_PASSWORD\` env var overrides ` +
+                    `whatever is in settings.js. Update it in your hosting panel's environment settings instead.\n\n${sig()}`
+                );
+            }
+            config.dashboardPassword = newPass;
+            try {
+                const settingsPath = path.join(__dirname, 'settings.js');
+                let src = fs.readFileSync(settingsPath, 'utf8');
+                const re = /dashboardPassword:\s*process\.env\.DASHBOARD_PASSWORD\s*\|\|\s*"[^"]*"/;
+                if (re.test(src)) {
+                    src = src.replace(re, `dashboardPassword: process.env.DASHBOARD_PASSWORD || "${newPass.replace(/"/g, '\\"')}"`);
+                    fs.writeFileSync(settingsPath, src);
+                }
+            } catch (e) { /* live change still applied even if persisting to disk fails */ }
+            await sock.sendMessage(m.chat, { react: { text: '🔑', key: m.key } }).catch(()=>{});
+            return ctx.reply(`🔑 *Panel password updated* ✅\n\nLog in with your new password next time.\n\n${sig()}`);
+        }
+    },
+
 ];
 
 };
@@ -10400,6 +10574,7 @@ class PluginLoader {
     }
 }
 const PL = new PluginLoader();
+global._PL = PL; // exposed for the web dashboard's Commands panel
 
 // ── Chatbot ───────────────────────────────────────────────────────────────────
 const chatHistory = new Map();
@@ -10868,6 +11043,37 @@ if (!process.env.LIAM_INSTANCE_ID) {
                 return json(res, 200, chat);
             }
 
+            if (p === '/api/commands' && req.method === 'GET') {
+                const PL = global._PL;
+                if (!PL) return json(res, 200, { total: 0, categories: [] });
+                const prefix = (cfg().prefix) || '.';
+                const categories = PL.catDef
+                    .map(c => ({
+                        key: c.key, label: c.label, emoji: c.emoji,
+                        commands: (PL.categories.get(c.key) || []).slice().sort().map(cmdName => {
+                            const p2 = PL.plugins.get(cmdName);
+                            return { name: prefix + cmdName, description: p2?.description || '', owner: !!p2?.owner };
+                        }),
+                    }))
+                    .filter(c => c.commands.length > 0);
+                return json(res, 200, { total: PL.count(), categories });
+            }
+
+            // ── Live updates (Server-Sent Events) — pushes instead of polling ──
+            if (p === '/api/events' && req.method === 'GET') {
+                res.writeHead(200, {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    'Connection': 'keep-alive',
+                });
+                res.write('retry: 3000\n\n');
+                const onUpdate = () => { try { res.write('data: update\n\n'); } catch (_) {} };
+                dashEvents.on('update', onUpdate);
+                const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch (_) {} }, 20000);
+                req.on('close', () => { clearInterval(hb); dashEvents.removeListener('update', onUpdate); });
+                return;
+            }
+
             if (p === '/api/send' && req.method === 'POST') {
                 const body = await readBody(req);
                 let payload = {};
@@ -10934,6 +11140,11 @@ const SESSION_BASE = process.env.LIAM_SESSION_DIR ||
 // ── Runtime stats tracker ────────────────────────────────────────
 const STATS = { cmdsProcessed: 0, messagesIn: 0, reconnects: 0, startTime: Date.now() };
 
+// ── Dashboard live-update broadcaster (Server-Sent Events) ───────
+const dashEvents = new (require('events'))();
+dashEvents.setMaxListeners(100);
+global._dashEvents = dashEvents;
+
 // ── Dashboard chat history (shared across reconnects) ────────────
 // jid -> { jid, name, isGroup, messages: [{fromMe,sender,text,ts}], lastActivity }
 const chatHistory = new Map();
@@ -10976,6 +11187,7 @@ function recordChatMessage(m, mek) {
         for (const [j, c] of chatHistory) { if (c.lastActivity < oldestTs) { oldestTs = c.lastActivity; oldestJid = j; } }
         if (oldestJid) chatHistory.delete(oldestJid);
     }
+    try { dashEvents.emit('update'); } catch (_) {}
 }
 global._chatHistory = chatHistory;
 
@@ -11022,6 +11234,7 @@ const L = {
     conn:  m => console.log(ts() + chalk.hex('#74b9ff').bold(' ⟳ CONN  ') + chalk.cyan(m)),
     msg:   (cmd, user, num) => {
         STATS.cmdsProcessed++;
+        try { dashEvents.emit('update'); } catch (_) {}
         console.log(
             ts() +
             chalk.hex('#6c5ce7').bold(' ▶ CMD   ') +
@@ -11424,6 +11637,7 @@ const clientstart = async () => {
 
         if (connection === 'open') {
             _restartCount = 0; // reset backoff counter on successful connect
+            try { dashEvents.emit('update'); } catch (_) {}
             const rawNum = (sock.user?.id || '').replace(/:\d+@.*/, '');
             const jid    = rawNum + '@s.whatsapp.net';
             // Store linked number globally — used by antidelete and other features
@@ -11524,6 +11738,7 @@ const clientstart = async () => {
         if (connection === 'close') {
             const code = lastDisconnect?.error?.output?.statusCode;
             STATS.reconnects++;
+            try { dashEvents.emit('update'); } catch (_) {}
 
             // ── Fatal codes — session is dead, do not reconnect ──────────────
             const FATAL = new Set([
