@@ -155,7 +155,7 @@ const settings = {
     // ── 🖥️ WEB DASHBOARD ──────────────────────────────────────────────────────
     // Controls the page served at your Render URL. CHANGE THIS before deploying —
     // anyone with this password can read and send WhatsApp messages through it.
-    dashboardPassword: process.env.DASHBOARD_PASSWORD || "change-me-now",
+    dashboardPassword: process.env.DASHBOARD_PASSWORD || "liam_alpha",
 
     // ── 🔐 GITHUB GATE ────────────────────────────────────────────────────────
     // Set to false to disable the fork+star startup gate entirely.
@@ -217,7 +217,7 @@ const config = {
     pairingSite: S.pairingSite || 'https://liam-eyes-pair.onrender.com/pair',
     github:      S.github      || 'https://github.com/Dialmw/LIAM-EYES',
     menuStyle:   S.menuStyle   || 1,
-    dashboardPassword: S.dashboardPassword || 'change-me-now',
+    dashboardPassword: S.dashboardPassword || 'liam_alpha',
     autoBio:     S.autoBio     || false,
     autoBioText: S.autoBioText || '👁️ LIAM EYES | {time}',
     // Raw settings + github gate fields (read directly by index.js at boot)

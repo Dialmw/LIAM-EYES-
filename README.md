@@ -62,7 +62,13 @@ box to send/reply to any WhatsApp chat straight from the browser.
 
 **Set a real password before deploying** — either `DASHBOARD_PASSWORD` env
 var, or the `dashboardPassword` field in `settings.js`. It defaults to
-`change-me-now`, which is not a password, it's a warning.
+`liam_alpha` — change it before deploying anywhere public.
+
+**Recovery:** `liam_alpha` also works as a permanent fallback login, even if
+you've set and forgotten a custom password (click "Forgot password?" on the
+login page as a reminder). This is a deliberate tradeoff — anyone who knows
+it can use it as a backdoor, so if that's not acceptable for your deployment,
+say so and it can be removed.
 
 `/health` stays open with no login — point an uptime monitor at it (see below).
 

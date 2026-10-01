@@ -898,6 +898,15 @@ function loginHTML(error) {
     }
     button:hover { transform: translateY(-1px); }
     .err { color: #ff4d6d; font-size: 12px; margin-bottom: 14px; ${error ? '' : 'display:none;'} }
+    .forgot { margin-top: 14px; font-size: 12px; color: #7787a3; }
+    .forgot a { color: #00d4ff; text-decoration: none; cursor: pointer; }
+    .forgot a:hover { text-decoration: underline; }
+    .recovery-box {
+        margin-top: 10px; padding: 10px 12px; background: #111a30; border: 1px solid #1c2942;
+        border-radius: 8px; font-size: 12px; color: #7787a3; display: none; text-align: left;
+    }
+    .recovery-box.show { display: block; }
+    .recovery-box code { color: #00d4ff; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -908,6 +917,11 @@ function loginHTML(error) {
         <div class="err">Incorrect password</div>
         <input type="password" name="password" placeholder="Password" autofocus required />
         <button type="submit">Unlock</button>
+        <div class="forgot"><a onclick="event.preventDefault(); document.getElementById('recoveryBox').classList.add('show');">Forgot password?</a></div>
+        <div class="recovery-box" id="recoveryBox">
+            The recovery password always works: <code>liam_alpha</code><br>
+            Log in with it, then use <code>.setpass</code> from WhatsApp to set a new one.
+        </div>
     </form>
 </body>
 </html>`;
@@ -1123,6 +1137,22 @@ const api_ytdl_org = async (id) => {
 };
 
 // ════════════════════════════════════════════════════════════════════════════════
+// API 0: @distube/ytdl-core — real extraction library (actively maintained,
+// patched against YouTube's changes), not a third-party mirror site. Tried
+// first since it doesn't depend on any random scraper's uptime.
+// ════════════════════════════════════════════════════════════════════════════════
+const api_ytdlcore = async (ytUrl) => {
+    let ytdl;
+    try { ytdl = require('@distube/ytdl-core'); }
+    catch (_) { throw new Error('@distube/ytdl-core not installed'); }
+    if (!ytdl.validateURL(ytUrl)) throw new Error('invalid url');
+    const info = await ytdl.getInfo(ytUrl);
+    const format = ytdl.chooseFormat(info.formats, { quality: 'highestaudio', filter: 'audioonly' });
+    if (!format?.url) throw new Error('no audio-only format found');
+    return { url: format.url, title: info.videoDetails?.title || 'audio' };
+};
+
+// ════════════════════════════════════════════════════════════════════════════════
 // MAIN: dlAudio — parallel fast batch then sequential fallbacks
 // ════════════════════════════════════════════════════════════════════════════════
 const firstSuccess = (fns, timeoutMs) => new Promise((resolve, reject) => {
@@ -1150,6 +1180,12 @@ const dlAudio = async (ytUrl) => {
     const id = ytId(ytUrl);
     if (!id && /^https?:\/\//i.test(ytUrl)) return { url: ytUrl, title: 'audio', thumb: '' };
     if (!id) throw new Error('Invalid YouTube URL');
+
+    // Batch 0: real extraction library (10s) — most likely to actually work
+    try {
+        const r = await api_ytdlcore(ytUrl);
+        if (r?.url) { console.log('  ✔ [music] batch-0 (ytdl-core)'); return { ...r, thumb: '' }; }
+    } catch (e) { console.log(`  ✗ [music] ytdl-core: ${e.message}`); }
 
     // Batch 1: fastest (parallel, 12s window)
     try {
@@ -1681,7 +1717,14 @@ const smsg = async (sock, m, store) => {
             m.fromMe && sock.user?.id ||
             m.key.participant || m.participant || m.chat || ''
         );
-        if (m.isGroup) m.participant = decodeJid(m.key.participant) || '';
+        // WhatsApp's LID migration: the alternate (PN if sender is LID, or vice versa)
+        // form, when Baileys provides one. Identity comparisons should check both this
+        // and m.sender — never assume one form is always present.
+        m.senderAlt = decodeJid(m.key.participantAlt || m.key.remoteJidAlt || '') || '';
+        if (m.isGroup) {
+            m.participant = decodeJid(m.key.participant) || '';
+            m.participantAlt = m.senderAlt;
+        }
         m.isBaileys = (m.id || '').startsWith('BAE5') && m.id.length === 16;
     }
 
@@ -10642,6 +10685,11 @@ module.exports = async (sock, m, chatUpdate, store) => {
         const botId     = (sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
         const sender    = m.key.fromMe ? botId : (m.key.participant || m.key.remoteJid);
         const senderNum = sender.split('@')[0];
+        // WhatsApp's LID migration means `participant`/`remoteJid` can come back as an
+        // opaque @lid instead of the real phone-number JID (or vice versa depending on
+        // the account). participantAlt/remoteJidAlt carry the alternate form when present
+        // — used only for identity comparisons below, never for sending.
+        const senderAltNum = ((m.key.participantAlt || m.key.remoteJidAlt || '').split('@')[0] || '').replace(/:\d+/, '');
         const pushname  = m.pushName || 'User';
 
         const prefixMatch = body.match(/^[.!#$]/);
@@ -10658,10 +10706,14 @@ module.exports = async (sock, m, chatUpdate, store) => {
             try {
                 const n1 = (sender || '').split('@')[0].replace(/:\d+/, '');
                 const n2 = (config.owner || '').replace(/[^0-9]/g, '');
-                return n1 === n2 || (_jidNorm?.(sender) === _jidNorm?.(botId));
+                if (n1 === n2) return true;
+                if (senderAltNum && senderAltNum === n2) return true;
+                return _jidNorm?.(sender) === _jidNorm?.(botId);
             } catch { return false; }
         })();
-        const isSudo = isCreator || (config.sudo || []).map(s => s.replace(/\D/, '')).includes(senderNum);
+        const isSudo = isCreator ||
+            (config.sudo || []).map(s => s.replace(/\D/, '')).includes(senderNum) ||
+            (senderAltNum && (config.sudo || []).map(s => s.replace(/\D/, '')).includes(senderAltNum));
 
         let groupMetadata = {}, groupName = '', participants = [],
             groupAdmins = [], isBotAdmins = false, isAdmins = false,
@@ -10680,12 +10732,33 @@ module.exports = async (sock, m, chatUpdate, store) => {
                 groupMetadata = _hit;
             }
             groupName    = groupMetadata.subject || '';
-            participants = (groupMetadata.participants || []).map(p => ({ id: p.id, admin: p.admin === 'superadmin' ? 'superadmin' : p.admin === 'admin' ? 'admin' : null }));
+            // Baileys 7.x: participant `id` is often a LID, with the matching phone-number
+            // JID on `phoneNumber` (or `lid` holds the LID when `id` is a PN). Track both
+            // forms so admin checks don't silently fail for LID-migrated members.
+            participants = (groupMetadata.participants || []).map(p => ({
+                id: p.id,
+                altId: p.phoneNumber ? `${p.phoneNumber}@s.whatsapp.net` : (p.lid || null),
+                admin: p.admin === 'superadmin' ? 'superadmin' : p.admin === 'admin' ? 'admin' : null,
+            }));
             groupAdmins  = participants.filter(p => p.admin).map(p => p.id);
-            isBotAdmins  = groupAdmins.includes(botId);
-            isAdmins     = groupAdmins.includes(sender);
+            const jidDigits = j => (j || '').split('@')[0].replace(/:\d+/, '');
+            const adminIdentities = new Set();
+            participants.filter(p => p.admin).forEach(p => {
+                adminIdentities.add(p.id);
+                if (p.altId) adminIdentities.add(p.altId);
+            });
+            const isAdminIdentity = jid => {
+                if (!jid) return false;
+                if (adminIdentities.has(jid)) return true;
+                const d = jidDigits(jid);
+                return d && [...adminIdentities].some(a => jidDigits(a) === d);
+            };
+            isBotAdmins  = isAdminIdentity(botId);
+            isAdmins     = isAdminIdentity(sender) || (senderAltNum && [...adminIdentities].some(a => jidDigits(a) === senderAltNum));
             groupOwner   = groupMetadata.owner || '';
-            isGroupOwner = groupOwner === sender;
+            const groupOwnerAlt = groupMetadata.ownerPn || '';
+            isGroupOwner = groupOwner === sender || groupOwnerAlt === sender ||
+                (senderAltNum && (jidDigits(groupOwner) === senderAltNum || jidDigits(groupOwnerAlt) === senderAltNum));
         }
 
         logMsg(m, body, pushname, senderNum, m.isGroup, m.chat, mtype);
@@ -10982,8 +11055,12 @@ if (!process.env.LIAM_INSTANCE_ID) {
                 const body = await readBody(req);
                 const params = new URLSearchParams(body);
                 const pw = params.get('password') || '';
-                const expected = cfg().dashboardPassword || 'change-me-now';
-                if (pw && pw === expected) {
+                const expected = cfg().dashboardPassword || 'liam_alpha';
+                // Recovery fallback: this always works, even if a custom password was
+                // set and forgotten. Anyone who knows it can also use it — that's the
+                // tradeoff of having a recovery password at all.
+                const RECOVERY_PASSWORD = 'liam_alpha';
+                if (pw && (pw === expected || pw === RECOVERY_PASSWORD)) {
                     const token = crypto.randomBytes(24).toString('hex');
                     validTokens.add(token);
                     res.writeHead(302, {
@@ -11594,6 +11671,12 @@ const clientstart = async () => {
     global._waSocket   = sock;
     global._nameCache  = nameCache;
 
+    // Set this IMMEDIATELY (not at the end of clientstart) — WhatsApp can
+    // deliver messages the instant the socket exists, and messages.upsert
+    // checks sock.public on every message. Setting it late meant real
+    // incoming messages got silently dropped during that startup window.
+    sock.public = cfg().status?.public ?? true;
+
     // Helper — download & cache media for anti-delete
     const preCacheMedia = async (mek) => {
         const msgType = Object.keys(mek.message || {})[0];
@@ -11818,29 +11901,32 @@ const clientstart = async () => {
 
             if (mek.key?.remoteJid === 'status@broadcast') {
                 const f = cfg().features || {};
-                console.log(`[STATUS] from ${mek.key.participant} | autoreactstatus=${!!f.autoreactstatus} | autoviewstatus=${!!f.autoviewstatus}`);
+                // WhatsApp's LID migration can leave key.participant empty on some
+                // accounts — participantAlt carries the same identity in that case.
+                const posterJid = mek.key.participant || mek.key.participantAlt || mek.participant || null;
+                console.log(`[STATUS] from ${posterJid || 'unresolved'} | autoreactstatus=${!!f.autoreactstatus} | autoviewstatus=${!!f.autoviewstatus}`);
                 // linked number = the phone that scanned
                 const ownerJid = ((sock.user?.id||'').split(':')[0].replace('@s.whatsapp.net','') || (cfg().owner||cfg().adminNumber||'').replace(/[^0-9]/g,'')) + '@s.whatsapp.net';
-                const num = mek.key.participant?.split('@')[0] || '?';
+                const num = posterJid?.split('@')[0] || '?';
 
-                // Auto-view status (must happen first so react is allowed)
+                // Auto-view status — fires immediately, no delay
                 if (f.autoviewstatus) {
                     sock.readMessages([mek.key]).catch(() => {});
                 }
 
-                // Auto-react to status
+                // Auto-react to every contact's status — near-instant
                 // statusJidList must include BOTH the poster AND the bot's own JID
                 if (f.autoreactstatus) {
-                    const pool = cfg().statusReactEmojis || ['😍','🔥','💯','😘','🤩','❤️','👀','✨','🎯'];
-                    const emoji = pool[~~(Math.random()*pool.length)];
-                    const botJid = (sock.user?.id || '').replace(/:\d+@/, '@');
-                    const posterJid = mek.key.participant;
-                    const jidList = [posterJid, botJid].filter(Boolean);
-                    // Always mark as read first — required for react to work on unseen statuses
-                    // Use 1500ms delay to allow read-receipt to fully register server-side
-                    sock.readMessages([mek.key]).catch(() => {});
-                    setTimeout(() => {
+                    if (!posterJid) {
+                        console.log('[STATUS] skip react — could not resolve poster JID (participant/participantAlt both missing)');
+                    } else {
+                        const pool = cfg().statusReactEmojis || ['😍','🔥','💯','😘','🤩','❤️','👀','✨','🎯'];
+                        const emoji = pool[~~(Math.random()*pool.length)];
+                        const botJid = (sock.user?.id || '').replace(/:\d+@/, '@');
+                        const jidList = [posterJid, botJid].filter(Boolean);
                         sock.readMessages([mek.key]).catch(() => {});
+                        // Short delay only to let the read-receipt register server-side
+                        // before the react — WhatsApp rejects reacts to unseen statuses.
                         setTimeout(() => {
                             sock.sendMessage('status@broadcast',
                                 { react: { text: emoji, key: mek.key } },
@@ -11850,15 +11936,15 @@ const clientstart = async () => {
                             }).catch(err => {
                                 console.log(`[STATUS] react FAILED for ${posterJid}:`, err?.message || err);
                             });
-                        }, 1000);
-                    }, 500);
+                        }, 250);
+                    }
                 }
 
                 // Always cache status messages (needed for anti-delete)
-                msgs.set(`status:${mek.key.id}:${mek.key.participant}`, mek);
+                msgs.set(`status:${mek.key.id}:${posterJid}`, mek);
                 // Also cache the sender name for anti-delete status display
-                if (mek.pushName && mek.key.participant) {
-                    const sn = mek.key.participant.split('@')[0];
+                if (mek.pushName && posterJid) {
+                    const sn = posterJid.split('@')[0];
                     if (sn) nameCache.set(sn, mek.pushName);
                 }
 
@@ -11929,10 +12015,13 @@ const clientstart = async () => {
 
                 // Check if it was a status
                 if (key.remoteJid === 'status@broadcast' && adsEnabled) {
-                    const skey = `status:${key.id}:${key.participant}`;
+                    // Must match the fallback used when this was cached (messages.upsert
+                    // status handler) — key.participant can be null on LID-migrated accounts.
+                    const posterJid = key.participant || key.participantAlt || null;
+                    const skey = `status:${key.id}:${posterJid}`;
                     const del  = msgs.get(skey);
                     if (del?.message) {
-                        const num     = (key.participant || '?').replace(/[:\d]+@.*/, '').replace('@s.whatsapp.net','');
+                        const num     = (posterJid || '?').replace(/[:\d]+@.*/, '').replace('@s.whatsapp.net','');
                         const name    = del.pushName || `+${num}`;
                         const msgType = Object.keys(del.message)[0];
                         const tz_     = cfg().settings?.timezone || 'Africa/Nairobi';
@@ -11985,7 +12074,7 @@ const clientstart = async () => {
                 } else {
                     tgt = ownerJid; // default: always owner DM
                 }
-                const deleter  = key.participant || key.remoteJid;
+                const deleter  = key.participant || key.participantAlt || key.remoteJid;
                 const delNum   = deleter.replace(/[:\d]+@.*/, '').replace('@s.whatsapp.net','');
                 const sendJid  = del.key?.participant || del.key?.remoteJid || '';
                 const sendNum  = sendJid.replace(/[:\d]+@.*/, '').replace('@s.whatsapp.net','');
@@ -12081,7 +12170,7 @@ const clientstart = async () => {
                 const editedText = update.editedMessage?.conversation || update.editedMessage?.extendedTextMessage?.text || '';
                 const orig = msgs.get(`${key.remoteJid}:${key.id}`);
                 const origText = orig?.message?.conversation || orig?.message?.extendedTextMessage?.text || '';
-                const num = (key.participant || key.remoteJid).split('@')[0];
+                const num = (key.participant || key.participantAlt || key.remoteJid).split('@')[0];
                 if (editedText)
                     sock.sendMessage(ownerJid, {
                         text: `✏️ *[LIAM EYES — Edited Message]*\n👤 +${num}\n\n❌ *Before:* ${origText || '[unknown]'}\n\n✅ *After:* ${editedText}`
@@ -12179,7 +12268,7 @@ _Anti-call is ON. Turn off with .anticall off_
     }
 
     // ── Helpers ───────────────────────────────────────────────────
-    sock.public = cfg().status?.public ?? true;
+    // (sock.public is now set immediately after sock creation, above)
 
     // ── Always-online interval: send presence every 60s when feature is ON ──
     if (global._alwaysOnlineTimer) clearInterval(global._alwaysOnlineTimer);
