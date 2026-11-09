@@ -38,4 +38,3 @@
 
 ---
 live in `contacts-cache.json`). It tells you how many contacts can see it, and gives a clear error instead of posting junk if the media can't be downloaded.
-- Anti-delete: original messages are now found even when WhatsApp reports the chat under a different ID, delete events are caught from both event types, and senders are shown as `Name (+number)` — never a raw ID (if the number is hidden you get the name).
