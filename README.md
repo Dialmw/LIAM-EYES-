@@ -37,4 +37,3 @@
 </p>
 
 ---
-live in `contacts-cache.json`). It tells you how many contacts can see it, and gives a clear error instead of posting junk if the media can't be downloaded.
