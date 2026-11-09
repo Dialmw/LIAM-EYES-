@@ -4081,15 +4081,23 @@ socialCmd('twitter',     '_Tweet with video/image_',                     { emoji
     }
 },
 
-// ── .pin (Pinterest-style image) ──────────────────────────────────────────
+// ── .pin (image search) ────────────────────────────────────────────────────
+// NOTE: source.unsplash.com (the old endpoint) was shut down — replaced with
+// Openverse, a free/no-key CC-licensed image search API.
 {
     command:'pin', category:'image',
     execute: async (sock,m,{text,reply}) => {
         if (!text) return reply(`❓ *.pin <search term>*\n\n${sig()}`);
         await react(sock,m,'📌');
         try {
-            const url = `https://source.unsplash.com/800x600/?${encodeURIComponent(text)}&t=${Date.now()}`;
-            await sock.sendMessage(m.chat,{image:{url},caption:`📌 *${text}*\n\n${sig()}`},{quoted:m});
+            const axios = require('axios');
+            const { data } = await axios.get('https://api.openverse.engineering/v1/images/', {
+                params: { q: text, page_size: 20 }, timeout: 15000,
+            });
+            const pics = (data?.results || []).filter(p => p.url);
+            if (!pics.length) throw new Error('No images found for that search.');
+            const pick = pics[Math.floor(Math.random() * pics.length)];
+            await sock.sendMessage(m.chat, { image: { url: pick.url }, caption: `📌 *${text}*\n\n${sig()}` }, { quoted: m });
             await react(sock,m,'✅');
         } catch(e){ await react(sock,m,'❌'); reply(`❌ Failed: ${e.message}\n\n${sig()}`); }
     }
