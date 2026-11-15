@@ -35,8 +35,10 @@ function memLimitMB() {
     } catch (_) {}
     return Math.min(os.totalmem() / 1048576, 4096);
 }
+// Node needs ~60-70 MB outside the JS heap (native buffers, sockets), so give the heap
+// everything else: e.g. 256 MB container → 184 MB heap. Too small a heap = constant GC (slow) or crashes at boot.
 const heapMB = () => Number(process.env.NODE_HEAP_MB) ||
-    Math.max(96, Math.min(1536, Math.floor(memLimitMB() * 0.55)));
+    Math.max(128, Math.min(1536, Math.floor(Math.min(memLimitMB() * 0.72, memLimitMB() - 70))));
 
 let restartDelay = MIN_DELAY;
 let restarts = 0;
@@ -73,7 +75,7 @@ function launch() {
         if (code === 3) {                                   // WhatsApp logged this session out
             restartDelay = LOGOUT_WAIT;
             console.log('\x1b[31m[SUPERVISOR]\x1b[0m Session was logged out — re-pair the number. Will retry in 5 min.');
-        } else if (aliveFor > STABLE_AFTER) {
+        } else if (code === 0 || aliveFor > STABLE_AFTER) {   // 0 = intentional .restart → come back fast
             restartDelay = MIN_DELAY;                       // it was stable — restart fast
         } else {
             restartDelay = Math.min(restartDelay * 2, MAX_DELAY);

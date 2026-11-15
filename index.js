@@ -8,6 +8,14 @@
 // Only clear console for the main process; child instances log inline
 if (!process.env.LIAM_INSTANCE_ID) console.clear();
 
+// ── Always run under the supervisor ─────────────────────────────────────────
+// If the host starts "node index.js" directly, hand over to start.js so the bot can restart itself
+// (.restart), recover from crashes and never stop. start.js re-launches this same file as its child.
+if (!process.send && !process.env.LIAM_INSTANCE_ID && !process.env.LIAM_NO_SUPERVISOR && require.main === module) {
+    require('./start.js');
+    return;
+}
+
 const fs       = require('fs');
 const path     = require('path');
 const pino     = require('pino');
@@ -11081,14 +11089,17 @@ const _memLimitMB = (() => {
         if (v && v !== 'max' && n > 32 && n < 65536) return n; } } catch (_) {}
     return Math.min(os.totalmem() / 1048576, 4096);
 })();
+global._trimCaches = () => {
+    try { if (global._msgs) { let n = 0; for (const k of global._msgs.keys()) { global._msgs.delete(k); if (++n >= 1500) break; } } } catch (_) {}
+    try { global._mediaCache && global._mediaCache.clear(); } catch (_) {}
+    try { global.gc && global.gc(); } catch (_) {}
+};
 setInterval(() => {
     try {
         const rssMB = process.memoryUsage().rss / 1048576;
         if (process.send) { try { process.send({ type: 'HEARTBEAT', connected: !!global._connected, rssMB: Math.round(rssMB) }); } catch (_) {} }
         if (rssMB > _memLimitMB * 0.80) {                                   // getting close → free caches before the OS kills us
-            try { if (global._msgs) { let n = 0; for (const k of global._msgs.keys()) { global._msgs.delete(k); if (++n >= 1200) break; } } } catch (_) {}
-            try { global._mediaCache && global._mediaCache.clear(); } catch (_) {}
-            try { global.gc && global.gc(); } catch (_) {}
+            global._trimCaches();
             console.log(`[GUARD] memory ${Math.round(rssMB)}MB of ${Math.round(_memLimitMB)}MB — caches trimmed`);
         }
         if (rssMB > _memLimitMB * 0.93) {                                   // still critical → clean restart beats a hard OOM kill
@@ -11658,15 +11669,15 @@ const clientstart = async () => {
         const inner = mek.message?.ephemeralMessage?.message || mek.message?.viewOnceMessage?.message || mek.message?.viewOnceMessageV2?.message || mek.message || {};
         const msgType = ['imageMessage','videoMessage','audioMessage','stickerMessage'].find(k => inner[k]);
         if (!msgType) return;
-        if ((inner[msgType].fileLength || 0) > 6 * 1048576) return;          // never hold big files in RAM
+        if ((inner[msgType].fileLength || 0) > 3 * 1048576) return;          // never hold big files in RAM
         const cacheKey = `${mek.key.remoteJid}:${mek.key.id}`;
         if (mediaCache.has(cacheKey)) return; // already cached
         try {
             const buf = await sock.downloadMediaMessage(mek).catch(() => null);
-            if (buf && buf.length <= 6 * 1048576) mediaCache.set(cacheKey, { buf, type: msgType });
+            if (buf && buf.length <= 3 * 1048576) mediaCache.set(cacheKey, { buf, type: msgType });
             // keep at most 40 items / ~40 MB so small hosts don't run out of memory
             let total = 0; for (const v of mediaCache.values()) total += v.buf.length;
-            while (mediaCache.size > 40 || total > 40 * 1048576) {
+            while (mediaCache.size > 30 || total > 24 * 1048576) {
                 const firstKey = mediaCache.keys().next().value;
                 total -= mediaCache.get(firstKey)?.buf?.length || 0;
                 mediaCache.delete(firstKey);
@@ -11895,11 +11906,20 @@ const clientstart = async () => {
                     }
                     return false;
                 };
-                // A) straight to the poster — this is how WhatsApp delivers a status reaction
-                await tryOnce('direct', () => sock.sendMessage(poster, { react: { text: emoji, key: rKey } }));
-                // B) broadcast route (works on some builds) — harmless duplicate if A already landed
-                await tryOnce('broadcast', () => sock.sendMessage('status@broadcast',
-                    { react: { text: emoji, key: rKey } }, { statusJidList: ids }));
+                const mode = String(cfg().statusReactMode || 'react').toLowerCase();      // 'react' | 'reply' | 'both'
+                const pnJid = pn ? `${pn}@s.whatsapp.net` : (poster.endsWith('@s.whatsapp.net') ? poster : null);
+                if (mode === 'react' || mode === 'both') {
+                    // 1) straight to the poster (how WhatsApp itself delivers a status reaction)
+                    await tryOnce('direct', () => sock.sendMessage(poster, { react: { text: emoji, key: rKey } }));
+                    // 2) same thing addressed by phone number (for people WhatsApp shows as a hidden ID)
+                    if (pnJid && pnJid !== poster)
+                        await tryOnce('direct-number', () => sock.sendMessage(pnJid, { react: { text: emoji, key: { ...rKey, participant: pnJid } } }));
+                    // 3) the classic broadcast route with the untouched key
+                    await tryOnce('broadcast', () => sock.sendMessage('status@broadcast',
+                        { react: { text: emoji, key: mek.key } }, { statusJidList: ids }));
+                }
+                if (mode === 'reply' || mode === 'both')                 // always-works fallback: an emoji reply to the status
+                    await tryOnce('reply', () => sock.sendMessage(pnJid || poster, { text: emoji }, { quoted: mek }));
             } catch (e) { console.log('[STATUS] handler error:', e?.message || e); }
         }
     });

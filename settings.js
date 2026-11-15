@@ -124,6 +124,8 @@ const settings = {
     channelBrand: "lec",   // "lec" = verified WhatsApp look + VISIT L.E.C button, "forward", or "off"
     lecUrl: "",            // ← put your L.E.C. website link here (the button opens it; falls back to the channel if empty)
     lecButtonText: "VISIT L.E.C",
+    lecStyle: "card",      // "card" = small tappable VISIT L.E.C card (always shows) · "button" = real WhatsApp button (may not show on every phone)
+    statusReactMode: "react", // "react" · "reply" (emoji reply to the status) · "both"
     pairingSite: "https://liam-scanner.onrender.com/pair",
     github:      "https://github.com/Dialmw/LIAM-EYES",
 
@@ -189,6 +191,8 @@ const config = {
     channelBrand:     S.channelBrand || 'lec',    // 'lec' | 'forward' | 'off'
     lecUrl:           S.lecUrl || process.env.LEC_URL || '',
     lecButtonText:    S.lecButtonText || 'VISIT L.E.C',
+    lecStyle:         S.lecStyle || 'card',
+    statusReactMode:  S.statusReactMode || 'react',
     channelJid:       S.channelJid || '',         // optional 120363…@newsletter (auto-resolved if empty)
     status:           { public: S.mode === 'public', terminal: true },
     features:         S.features,

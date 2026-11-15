@@ -122,17 +122,6 @@ async function ensureYtdlp() {
                 }
             }
         }
-        // 4) self-update if the local copy is older than 24h (fire-and-forget)
-        if (ytdlpBin === YTDLP_PATH) {
-            try {
-                const age = Date.now() - fs.statSync(YTDLP_PATH).mtimeMs;
-                if (age > 24 * 3600 * 1000) {
-                    exec(YTDLP_PATH, ['-U'], { timeout: 90000 })
-                        .then(() => { try { fs.utimesSync(YTDLP_PATH, new Date(), new Date()); } catch (_) {} log('yt-dlp updated'); })
-                        .catch(() => { try { fs.utimesSync(YTDLP_PATH, new Date(), new Date()); } catch (_) {} });
-                }
-            } catch (_) {}
-        }
         if (!ytdlpBin) ytdlpReady = null; // allow retry later
         return ytdlpBin;
     })();
@@ -156,13 +145,49 @@ function envArgs() {
  * Download with yt-dlp → local file.
  * @returns {{path:string, title:string, ext:string}}
  */
-async function ytdlpDownload(url, { audio = false, maxHeight = 480, maxMB = 95, extra = [] } = {}) {
+// How much RAM is left in the container (cgroup v2 / v1), minus reclaimable file cache
+function memAvailMB() {
+    try {
+        const rd = p => fs.readFileSync(p, 'utf8').trim();
+        let limit = 0, used = 0, cache = 0;
+        if (fs.existsSync('/sys/fs/cgroup/memory.max')) {
+            const l = rd('/sys/fs/cgroup/memory.max');
+            if (l !== 'max') {
+                limit = +l; used = +rd('/sys/fs/cgroup/memory.current');
+                const st = rd('/sys/fs/cgroup/memory.stat').match(/^inactive_file (\d+)/m); if (st) cache = +st[1];
+            }
+        } else if (fs.existsSync('/sys/fs/cgroup/memory/memory.limit_in_bytes')) {
+            limit = +rd('/sys/fs/cgroup/memory/memory.limit_in_bytes'); used = +rd('/sys/fs/cgroup/memory/memory.usage_in_bytes');
+            const st = rd('/sys/fs/cgroup/memory/memory.stat').match(/^total_inactive_file (\d+)/m); if (st) cache = +st[1];
+        }
+        if (limit && limit < 1e12 && used) return (limit - used + cache) / MB;
+    } catch (_) {}
+    return os.freemem() / MB;
+}
+const NEED_MB = Number(process.env.YTDLP_MIN_FREE_MB) || 70;
+
+// one yt-dlp at a time — two at once on a small host gets the bot OOM-killed
+let _ytQueue = Promise.resolve();
+function ytdlpDownload(url, opts) {
+    const run = () => _ytdlpDownload(url, opts);
+    const p = _ytQueue.then(run, run);
+    _ytQueue = p.catch(() => {});
+    return p;
+}
+
+async function _ytdlpDownload(url, { audio = false, maxHeight = 480, maxMB = 95, extra = [] } = {}) {
+    if (memAvailMB() < NEED_MB) {                       // free memory first, then re-check
+        try { global._trimCaches && global._trimCaches(); } catch (_) {}
+        await new Promise(r => setTimeout(r, 800));
+        const left = memAvailMB();
+        if (left < NEED_MB) throw new Error(`not enough free memory for the downloader (${Math.round(left)}MB free, needs ~${NEED_MB}MB) — try again in a minute or use a bigger plan`);
+    }
     const bin = await ensureYtdlp();
     if (!bin) throw new Error('yt-dlp unavailable on this host');
     const id = rid();
     const tpl = path.join(TMP_DIR, `${id}.%(ext)s`);
     const args = [
-        '--no-playlist', '--no-warnings', '--no-progress', '--restrict-filenames',
+        '--no-playlist', '--no-warnings', '--no-progress', '--restrict-filenames', '--no-cache-dir',
         '--socket-timeout', '20', '--retries', '2', '--fragment-retries', '2',
         '--max-filesize', `${maxMB}M`,
         '--ffmpeg-location', FFMPEG,
@@ -531,6 +556,7 @@ function installChannelBranding(sock, getCfg) {
         return (b === 'both' || b === 'card' || b === 'lec') ? 'lec' : b;        // old "both"/"card" values now mean the L.E.C. style
     };
     const orig = sock.sendMessage.bind(sock);
+    const lecStyle = () => String(cfg().lecStyle || process.env.LEC_STYLE || 'card').toLowerCase();   // 'card' | 'button'
 
     const stylable = (jid, c) => {
         if (!c || typeof c !== 'object' || typeof jid !== 'string') return false;
@@ -547,6 +573,14 @@ function installChannelBranding(sock, getCfg) {
     sock.sendMessage = async (jid, content, options) => {
         const mode = brand();
         try {
+            if (mode === 'lec' && (cfg().features || {}).lecbutton !== false && stylable(jid, content) && lecStyle() === 'card') {
+                // verified "WhatsApp" header + a small tappable "VISIT L.E.C" card under the message (no picture)
+                const ci = { ...(content.contextInfo || {}) };
+                ci.externalAdReply = { title: cfg().lecButtonText || 'VISIT L.E.C', body: 'Liam Eyes Creations', sourceUrl: url(), mediaType: 1,
+                    renderLargerThumbnail: false, showAdAttribution: false };
+                const { lecCard, ...plain } = content;
+                return orig(jid, { ...plain, contextInfo: ci }, { ...(options || {}), quoted: VERIFIED_QUOTE });
+            }
             if (mode === 'lec' && (cfg().features || {}).lecbutton !== false && Date.now() > state.pausedUntil && stylable(jid, content)) {
                 try {
                     const { msg, extra } = await buildLec(sock, jid, content, options, cfg());
@@ -559,8 +593,8 @@ function installChannelBranding(sock, getCfg) {
                     if (state.fails >= 3) { state.pausedUntil = Date.now() + 30 * 60 * 1000; state.fails = 0; log('L.E.C. button paused for 30 min — using the small card instead'); }
                     // fallback: normal message + small tappable "VISIT L.E.C" card
                     const ci = { ...(content.contextInfo || {}) };
-                    ci.externalAdReply = { title: 'VISIT L.E.C', body: cfg().botName || 'LIAM EYES', sourceUrl: url(), mediaType: 1,
-                        renderLargerThumbnail: false, showAdAttribution: false, ...(BOT_THUMB ? { thumbnail: BOT_THUMB } : {}) };
+                    ci.externalAdReply = { title: cfg().lecButtonText || 'VISIT L.E.C', body: 'Liam Eyes Creations', sourceUrl: url(), mediaType: 1,
+                        renderLargerThumbnail: false, showAdAttribution: false };
                     const { lecCard, ...plain } = content;
                     const body = (lecCard && BOT_IMAGE && typeof plain.text === 'string') ? { image: BOT_IMAGE, caption: plain.text, contextInfo: ci } : { ...plain, contextInfo: ci };
                     return orig(jid, body, { ...(options || {}), quoted: VERIFIED_QUOTE });
@@ -585,11 +619,10 @@ function installChannelBranding(sock, getCfg) {
 
 module.exports = {
     FFMPEG, TMP_DIR,
-    ensureYtdlp, ytdlpDownload, fetchBuffer,
+    ensureYtdlp, ytdlpDownload, fetchBuffer, memAvailMB,
     socialDownload, sendDownloaded, ytAudio, ytVideo,
     p_tikwm, p_cobalt,
     installChannelBranding, BOT_IMAGE, BOT_THUMB, VERIFIED_QUOTE,
 };
 
-// warm up in the background so the first command is fast
-ensureYtdlp().catch(() => {});
+// (yt-dlp is installed lazily on first use — nothing heavy runs at startup)
