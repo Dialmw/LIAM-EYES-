@@ -22,7 +22,7 @@ const JsConfuser = require('js-confuser');
 
 const SRC_DIR = __dirname;
 const OUT_DIR = path.join(__dirname, 'dist');
-const FILES = ['index.js', 'media.js', 'imageedit.js', 'start.js']; // settings.js intentionally left readable (it's user config)
+const FILES = ['index.js', 'media.js', 'imageedit.js', 'diag.js', 'start.js']; // settings.js intentionally left readable (it's user config)
 
 const OPTIONS = {
     target: 'node',

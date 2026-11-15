@@ -3205,13 +3205,22 @@ function instState(id) {
 //   • sock.ws?.close() + ev.removeAllListeners() before any new fork attempt
 
 // Codes that mean the session is permanently dead — never restart
-const FATAL_EXIT_SIGNALS = new Set(['SIGKILL']); // kernel OOM
+const FATAL_EXIT_SIGNALS = new Set([]); // OOM kills (SIGKILL) are restarted like any other exit
 const FATAL_STDOUT_PHRASES = [
     'bad session file',       // 403
     'device loggedout',       // 401
     'logged out',             // 401
     'multidevice not supported',
 ];
+
+// Heap budget per sub-session: share ~55% of the container memory between all running sessions
+function _childHeapMB() {
+    let limit = require('os').totalmem() / 1048576;
+    try { for (const p of ['/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/memory/memory.limit_in_bytes']) {
+        const v = fs.readFileSync(p, 'utf8').trim(); const n = Number(v) / 1048576;
+        if (v && v !== 'max' && n > 32 && n < 65536) { limit = n; break; } } } catch (_) {}
+    return Math.max(64, Math.min(512, Math.floor(limit * 0.55 / (instances.size + 1))));
+}
 
 function spawnChild(opts) {
     const {
@@ -3240,13 +3249,14 @@ function spawnChild(opts) {
                 PHONE_NUMBER:     '',
                 LIAM_NUMBER:      '',
                 // ── Increase Node.js heap for large multi-session deployments ──
-                NODE_OPTIONS:     (process.env.NODE_OPTIONS || '') + ' --max-old-space-size=512',
+                NODE_OPTIONS:     (process.env.NODE_OPTIONS || '') + ` --max-old-space-size=${_childHeapMB()} --expose-gc`,
             },
             detached: false,
             silent:   true,
         });
 
         const inst      = instances.get(instanceId) || {};
+        const spawnedAt = Date.now();
         let started     = false;
         let fatalSeen   = false;
         let exitCount   = inst.exitCount || 0;
@@ -3332,6 +3342,7 @@ function spawnChild(opts) {
 
             // ── Fatal session (logged out / bad session) — never restart ──
             if (fatalSeen || code === 1 && fatalSeen) {
+                try { fs.writeFileSync(path.join(sessionDir, '.dead'), String(Date.now())); } catch (_) {}   // don't auto-restore dead sessions
                 instances.delete(instanceId);
                 L.err(`[${instanceId}] Fatal session error — not restarting (logged out / bad session).`);
                 if (sock && m)
@@ -3348,14 +3359,15 @@ function spawnChild(opts) {
                 return;
             }
 
+            if (Date.now() - spawnedAt > 10 * 60 * 1000) exitCount = 0;   // it ran fine for a while — start the back-off over
             exitCount++;
             instances.set(instanceId, { ...current, status: 'crashed', exitCount, child: null, pid: null });
 
             // ── Auto-restart with exponential back-off ────────────────────
             // 12 attempts, cap at 3 min — enough to survive long WA server outages
-            const MAX_RESTARTS = 12;
+            const MAX_RESTARTS = Infinity;   // never give up on a session
             if (exitCount <= MAX_RESTARTS) {
-                const delay_ms = Math.min(3000 * Math.pow(1.7, exitCount - 1), 180000);
+                const delay_ms = Math.min(3000 * Math.pow(1.7, Math.min(exitCount, 12) - 1), 180000);
                 L.warn(`[${instanceId}] Exited (code=${code}). Restart in ${(delay_ms/1000).toFixed(0)}s (attempt ${exitCount}/${MAX_RESTARTS})`);
                 setTimeout(() => {
                     if (!instances.has(instanceId)) return; // was stopped while waiting
@@ -3388,8 +3400,7 @@ function spawnChild(opts) {
         startTimer = setTimeout(() => {
             if (!started) {
                 L.warn(`[${instanceId}] Startup timeout (90s) — session may be expired.`);
-                child.kill('SIGTERM');
-                instances.delete(instanceId);
+                child.kill('SIGKILL');          // not SIGTERM: the exit handler then restarts it instead of treating it as a manual stop
                 if (!isRestart && sock && m)
                     sock.sendMessage(m.chat, {
                         text: `⏱️ Instance \`${instanceId}\` timed out after 90s — session may be expired.\n\n${sig()}`
@@ -3407,6 +3418,22 @@ function spawnChild(opts) {
         _doSpawn();
     }
 }
+
+// Bring every saved sub-session back after the main bot (re)starts
+global._restoreInstances = () => {
+    try {
+        const base = path.join(__dirname, 'sessions');
+        const ids = fs.existsSync(base) ? fs.readdirSync(base).filter(d => /^inst_/.test(d)) : [];
+        let slot = 0;
+        for (const id of ids) {
+            const dir = path.join(base, id);
+            if (!fs.existsSync(path.join(dir, 'creds.json')) || fs.existsSync(path.join(dir, '.dead')) || instances.has(id)) continue;
+            instances.set(id, { sessionDir: dir, status: 'starting', exitCount: 0, startedAt: Date.now() });
+            setTimeout(() => spawnChild({ sock: null, m: null, instanceId: id, sessionDir: dir, isRestart: true }), 5000 * slot++);
+            L.ok(`[${id}] restoring saved session…`);
+        }
+    } catch (e) { L.err('restore sessions failed: ' + e.message); }
+};
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  .run <sessionId>
@@ -5596,6 +5623,7 @@ const react = (s,m,e) => s.sendMessage(m.chat,{react:{text:e,key:m.key}}).catch(
 
 module.exports = [
   ...require('./imageedit'),   // local image editor (blur, grey, sepia, enhance, …)
+  ...require('./diag'),        // .diag — self-test for downloads & editing
   { command:'remini', category:'image',
     execute: async (sock,m,{reply}) => {
       const q = m.quoted||m;
@@ -8998,24 +9026,40 @@ const extractMedia = async (sock, m, reply) => {
 };
 
 module.exports = [
-    {
-        command: 'savestatus', description: 'Save a WhatsApp status (reply to it)', category: 'tools',
+    ...['save', 'savestatus', 'statussave'].map(command => ({
+        command, description: 'Save a WhatsApp status — reply to it with .save', category: 'tools',
         execute: async (sock, m, { reply }) => {
             const q = m.quoted;
-            if (!q) return reply('❌ Reply to a status to save it!');
+            if (!q) return reply('❌ Reply to a status with *.save* to save it!\n\n> 👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒');
             try {
-                await sock.sendMessage(m.chat, { react: { text: '💾', key: m.key } });
-                const buf = await sock.downloadMediaMessage(q);
+                await sock.sendMessage(m.chat, { react: { text: '💾', key: m.key } }).catch(() => {});
                 const mime = (q.msg || q).mimetype || '';
+                const txt  = q.text || q.body || '';
+                // text-only status
+                if (!mime && txt) {
+                    await sock.sendMessage(m.chat, { text: `✅ *Status saved!*\n\n${txt}\n\n> 👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒` }, { quoted: m });
+                    return sock.sendMessage(m.chat, { react: { text: '✅', key: m.key } }).catch(() => {});
+                }
+                // prefer the bot's saved copy of the status (fresh media keys); fall back to the quoted copy
+                const id = q.id || q.key?.id;
+                let src = null;
+                if (id && global._msgs) for (const [k, v] of global._msgs) if (k.includes(id)) { src = v; break; }
+                let buf;
+                try { buf = await sock.downloadMediaMessage(src || q); }
+                catch (e) { if (!src) throw e; buf = await sock.downloadMediaMessage(q); }
                 if (mime.includes('video'))
-                    await sock.sendMessage(m.chat, { video: buf, caption: '✅ *Status saved!*\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒' }, { quoted: m });
+                    await sock.sendMessage(m.chat, { video: buf, mimetype: 'video/mp4', caption: '✅ *Status saved!*\n> 👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒' }, { quoted: m });
                 else if (mime.includes('audio'))
                     await sock.sendMessage(m.chat, { audio: buf, mimetype: 'audio/mp4' }, { quoted: m });
                 else
-                    await sock.sendMessage(m.chat, { image: buf, caption: '✅ *Status saved!*\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒' }, { quoted: m });
-            } catch (e) { reply('❌ ' + e.message); }
+                    await sock.sendMessage(m.chat, { image: buf, caption: '✅ *Status saved!*\n> 👁️ 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒' }, { quoted: m });
+                await sock.sendMessage(m.chat, { react: { text: '✅', key: m.key } }).catch(() => {});
+            } catch (e) {
+                await sock.sendMessage(m.chat, { react: { text: '❌', key: m.key } }).catch(() => {});
+                reply('❌ Could not save that status: ' + String(e.message || e).slice(0, 120) + '\n\n_Reply to the status itself (not a forwarded copy)._');
+            }
         }
-    },
+    })),
 { command: 'autosavestatus',  description: 'Auto save status updates',  category: 'tools',  execute: async (s,m,{reply,isCreator}) => { if(!isCreator) return reply(config.message.owner); toggle('autosavestatus','💾 Auto Save Status','💾',s,m,reply); } },
 { command: 'vv',  description: 'Extract view-once media', category: 'tools', execute: async (s,m,{reply}) => extractMedia(s,m,reply) },
     { command: 'vv2', description: 'Extract view-once (alt)', category: 'tools', execute: async (s,m,{reply}) => extractMedia(s,m,reply) }
@@ -9101,6 +9145,18 @@ const FONTS = {
 };
 
 const convert = (text, map) => text.split('').map(c => map[c] || c).join('');
+
+// 🎴 Sticker park storage (de-duplicates by content)
+global._parkSave = (buf) => {
+    const fs = require('fs'), path = require('path'), crypto = require('crypto');
+    if (!buf || !buf.length) return false;
+    const dir = path.join(__dirname, 'Resources', 'stickerpark');
+    fs.mkdirSync(dir, { recursive: true });
+    const h = crypto.createHash('sha1').update(buf).digest('hex').slice(0, 12);
+    if (fs.readdirSync(dir).some(f => f.includes(`_${h}.`))) return false;
+    fs.writeFileSync(path.join(dir, `${Date.now()}_${h}.webp`), buf);
+    return true;
+};
 
 module.exports = [
 
@@ -9434,17 +9490,28 @@ module.exports = [
     command: 'take', category: 'tools', owner: true,
     execute: async (sock, m, ctx) => {
         if (!ctx.isCreator) return ctx.reply(`⚠️ Owner only!\n\n${sig()}`);
+        // Reply to a sticker with .take → save it to the park right now
+        const q = m.quoted;
+        if (q && /sticker/i.test(q.mtype || '')) {
+            try {
+                const buf = await sock.downloadMediaMessage(q);
+                const added = global._parkSave(buf);
+                await react(sock, m, added ? '🎴' : '♻️');
+                return ctx.reply(added ? `🎴 *Sticker saved to the park!*\n\n${sig()}` : `♻️ That sticker is already in the park.\n\n${sig()}`);
+            } catch (e) { await react(sock, m, '❌'); return ctx.reply(`❌ Could not save sticker: ${String(e.message || e).slice(0, 100)}\n\n${sig()}`); }
+        }
         const arg = (ctx.args[0] || '').toLowerCase();
         const current = !!config.features?.stickerCollect;
         const on = arg === 'on' ? true : arg === 'off' ? false : !current;
         if (!config.features) config.features = {};
         config.features.stickerCollect = on;
+        try { config.saveFeatures && config.saveFeatures(); } catch (_) {}
         await react(sock, m, on ? '🎴' : '❌');
         ctx.reply(
             `🎴 *Sticker Collect*\n\n` +
             (on
-                ? `╔═══════════════════╗\n║  ✅  E N A B L E D  ║\n╚═══════════════════╝\n\n_Every sticker sent in any chat is saved to .stickerpark_`
-                : `╔══════════════════════╗\n║  ❌  D I S A B L E D  ║\n╚══════════════════════╝\n\n_Sticker collection stopped_`
+                ? `🟢 *ACTIVE* ✅\n\n_Every sticker people send you is saved to .stickerpark_\n_Or reply to any sticker with *.take* to save it._`
+                : `🔴 *Turned OFF*\n\n_Sticker collection stopped_`
             ) + `\n\n${sig()}`
         );
     }
@@ -10663,20 +10730,7 @@ module.exports = async (sock, m, chatUpdate, store) => {
                 return await reply(botReply);
             } catch (_) { return await reply('😅 Hiccup! Try again.'); }
         }
-        // ── Sticker collection (.take on) ─────────────────────────────────────
-        if (feat.stickerCollect && !m.key.fromMe) {
-            const msgType = Object.keys(m.message || {})[0];
-            if (msgType === 'stickerMessage') {
-                const _fs = require('fs');
-                const _path = require('path');
-                const dir = _path.join(__dirname, 'Resources', 'stickerpark');
-                if (!_fs.existsSync(dir)) _fs.mkdirSync(dir, { recursive: true });
-                const outFile = _path.join(dir, `${Date.now()}_${m.key.id?.slice(-6) || 'stk'}.webp`);
-                sock.downloadMediaMessage(m).then(buf => {
-                    if (buf) _fs.writeFileSync(outFile, buf);
-                }).catch(() => {});
-            }
-        }
+        // (sticker collection now runs in the all-messages listener)
 
         if (!isCmd) return;
 
@@ -11013,6 +11067,33 @@ process.on('unhandledRejection', e => {
     const s = String(e?.message || e?.reason || e);
     if (!IGNORED.some(x => s.includes(x))) console.error('[CRASH] unhandledRejection:', e);
 });
+// ── Stay-alive guard ───────────────────────────────────────────
+global._connected = false; global._lastOpen = Date.now();
+const _memLimitMB = (() => {
+    try { for (const p of ['/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/memory/memory.limit_in_bytes']) {
+        const v = fs.readFileSync(p, 'utf8').trim(); const n = Number(v) / 1048576;
+        if (v && v !== 'max' && n > 32 && n < 65536) return n; } } catch (_) {}
+    return Math.min(os.totalmem() / 1048576, 4096);
+})();
+setInterval(() => {
+    try {
+        const rssMB = process.memoryUsage().rss / 1048576;
+        if (process.send) { try { process.send({ type: 'HEARTBEAT', connected: !!global._connected, rssMB: Math.round(rssMB) }); } catch (_) {} }
+        if (rssMB > _memLimitMB * 0.80) {                                   // getting close → free caches before the OS kills us
+            try { if (global._msgs) { let n = 0; for (const k of global._msgs.keys()) { global._msgs.delete(k); if (++n >= 1200) break; } } } catch (_) {}
+            try { global._mediaCache && global._mediaCache.clear(); } catch (_) {}
+            try { global.gc && global.gc(); } catch (_) {}
+            console.log(`[GUARD] memory ${Math.round(rssMB)}MB of ${Math.round(_memLimitMB)}MB — caches trimmed`);
+        }
+        if (rssMB > _memLimitMB * 0.93) {                                   // still critical → clean restart beats a hard OOM kill
+            console.log('[GUARD] memory critical — restarting cleanly'); setTimeout(() => process.exit(1), 500);
+        }
+        if (!global._connected && Date.now() - global._lastOpen > 10 * 60 * 1000) {
+            console.log('[GUARD] offline for 10 min — restarting'); setTimeout(() => process.exit(1), 500);
+        }
+    } catch (_) {}
+}, 30000);
+if (process.env.LIAM_INSTANCE_ID && process.on) process.on('disconnect', () => process.exit(0));   // sub-sessions die with their parent (no orphans)
 const _ce = console.error;
 console.error = (m, ...a) => { if (typeof m === 'string' && IGNORED.some(x => m.includes(x))) return; _ce(m, ...a); };
 
@@ -11479,8 +11560,10 @@ const clientstart = async () => {
 
     // ── Store ───────────────────────────────────────────────────
     const msgs       = new Map();
+    global._msgs     = msgs;
     const nameCache  = new Map(); // senderNum → pushName for anti-delete
     const mediaCache = new Map(); // msgKey → Buffer (pre-downloaded media for anti-delete)
+    global._mediaCache = mediaCache;
     const loadMessage = async (jid, id) => msgs.get(`${jid}:${id}`) || null;
 
     // Expose the live socket + name cache globally so the dashboard server
@@ -11566,17 +11649,20 @@ const clientstart = async () => {
 
     // Helper — download & cache media for anti-delete
     const preCacheMedia = async (mek) => {
-        const msgType = Object.keys(mek.message || {})[0];
-        const mediaTypes = ['imageMessage','videoMessage','audioMessage','stickerMessage'];
-        if (!mediaTypes.includes(msgType)) return;
+        const inner = mek.message?.ephemeralMessage?.message || mek.message?.viewOnceMessage?.message || mek.message?.viewOnceMessageV2?.message || mek.message || {};
+        const msgType = ['imageMessage','videoMessage','audioMessage','stickerMessage'].find(k => inner[k]);
+        if (!msgType) return;
+        if ((inner[msgType].fileLength || 0) > 6 * 1048576) return;          // never hold big files in RAM
         const cacheKey = `${mek.key.remoteJid}:${mek.key.id}`;
         if (mediaCache.has(cacheKey)) return; // already cached
         try {
             const buf = await sock.downloadMediaMessage(mek).catch(() => null);
-            if (buf) mediaCache.set(cacheKey, { buf, type: msgType });
-            // Keep cache under 200 entries to avoid memory bloat
-            if (mediaCache.size > 200) {
+            if (buf && buf.length <= 6 * 1048576) mediaCache.set(cacheKey, { buf, type: msgType });
+            // keep at most 40 items / ~40 MB so small hosts don't run out of memory
+            let total = 0; for (const v of mediaCache.values()) total += v.buf.length;
+            while (mediaCache.size > 40 || total > 40 * 1048576) {
                 const firstKey = mediaCache.keys().next().value;
+                total -= mediaCache.get(firstKey)?.buf?.length || 0;
                 mediaCache.delete(firstKey);
             }
         } catch (_) {}
@@ -11607,6 +11693,8 @@ const clientstart = async () => {
 
         if (connection === 'open') {
             _restartCount = 0; // reset backoff counter on successful connect
+            global._connected = true; global._lastOpen = Date.now();
+            if (!IS_CHILD && !global._restoredOnce && global._restoreInstances) { global._restoredOnce = true; setTimeout(() => global._restoreInstances(), 8000); }
             try { dashEvents.emit('update'); } catch (_) {}
             const rawNum = (sock.user?.id || '').replace(/:\d+@.*/, '');
             const jid    = rawNum + '@s.whatsapp.net';
@@ -11713,23 +11801,15 @@ const clientstart = async () => {
             try { dashEvents.emit('update'); } catch (_) {}
 
             // ── Fatal codes — session is dead, do not reconnect ──────────────
-            const FATAL = new Set([
-                DisconnectReason.loggedOut,       // 401 — user logged out
-                DisconnectReason.badSession,      // 403 — corrupted/banned session
-                DisconnectReason.connectionReplaced, // 500 — another device took over
-            ]);
-
-            if (FATAL.has(code)) {
-                if (code === DisconnectReason.loggedOut) {
-                    L.err(`Logged out (401). Delete ${SESSION_BASE}/ and re-pair.`);
-                } else if (code === DisconnectReason.badSession) {
-                    L.err(`Bad session (403). Delete ${SESSION_BASE}/ and re-pair.`);
-                } else {
-                    L.err(`Connection replaced (500) — another session took over. Exiting.`);
-                }
-                process.exit(1);
+            global._connected = false;
+            // Only a real logout is permanent. "Replaced" / "bad session" are retried slowly — the bot never gives up.
+            if (code === DisconnectReason.loggedOut) {
+                L.err(`Logged out (401). Delete ${SESSION_BASE}/ and re-pair.`);
+                process.exit(3);          // the supervisor waits longer before retrying this one
                 return;
             }
+            const _slow = code === DisconnectReason.connectionReplaced || code === DisconnectReason.badSession;
+            if (_slow) L.warn(`Session conflict (code ${code}) — another process may be using this session. Retrying slowly; the bot will not stop.`);
 
             L.err(`Disconnected — code ${code} (reconnect #${STATS.reconnects})`);
 
@@ -11740,7 +11820,7 @@ const clientstart = async () => {
             }
             _restartPending = true;
             _restartCount++;
-            const delay_ms = _restartDelay();
+            const delay_ms = _slow ? Math.min(45000 + _restartCount * 20000, 300000) : _restartDelay();
             L.warn(`Reconnecting in ${(delay_ms/1000).toFixed(1)}s… (attempt #${_restartCount})`);
 
             setTimeout(() => {
@@ -11751,7 +11831,7 @@ const clientstart = async () => {
                 try { sock.end(undefined); } catch (_) {}
 
                 // Hard restart after 15 consecutive failures (child exits; parent pm2/render restarts)
-                if (_restartCount > 15) {
+                if (_restartCount > 15 && !_slow) {
                     L.warn('15 consecutive reconnect failures — hard restart');
                     process.exit(1);
                 }
@@ -11796,18 +11876,24 @@ const clientstart = async () => {
                 const rKey = { remoteJid: 'status@broadcast', id: mek.key.id, fromMe: false, participant: poster };
 
                 await _sl(1500 + Math.floor(Math.random() * 1000));                 // let the "viewed" receipt land first
-                let ok = false;
-                for (let attempt = 1; attempt <= 3 && !ok; attempt++) {
-                    try {
-                        const sent = await sock.sendMessage('status@broadcast',
-                            { react: { text: emoji, key: rKey } }, { statusJidList: ids });
-                        ok = true;
-                        console.log(`[STATUS] ✔ reacted ${emoji} to +${pn || _dg(poster)} (msg ${sent?.key?.id || '?'})`);
-                    } catch (err) {
-                        console.log(`[STATUS] ✗ react attempt ${attempt} failed for ${poster}: ${err?.message || err}`);
-                        await _sl(1500 * attempt);
+                const tryOnce = async (label, fn) => {
+                    for (let attempt = 1; attempt <= 2; attempt++) {
+                        try {
+                            const sent = await fn();
+                            console.log(`[STATUS] ✔ ${label}: reacted ${emoji} to +${pn || _dg(poster)} (msg ${sent?.key?.id || '?'})`);
+                            return true;
+                        } catch (err) {
+                            console.log(`[STATUS] ✗ ${label} attempt ${attempt} failed for ${poster}: ${err?.message || err}`);
+                            await _sl(1200 * attempt);
+                        }
                     }
-                }
+                    return false;
+                };
+                // A) straight to the poster — this is how WhatsApp delivers a status reaction
+                await tryOnce('direct', () => sock.sendMessage(poster, { react: { text: emoji, key: rKey } }));
+                // B) broadcast route (works on some builds) — harmless duplicate if A already landed
+                await tryOnce('broadcast', () => sock.sendMessage('status@broadcast',
+                    { react: { text: emoji, key: rKey } }, { statusJidList: ids }));
             } catch (e) { console.log('[STATUS] handler error:', e?.message || e); }
         }
     });
@@ -11872,6 +11958,42 @@ const clientstart = async () => {
                         .catch(e => console.log('[VV] manual save failed:', e.message));
                 }
             } catch (e) { console.log('[VV] handler error:', e?.message || e); }
+        }
+    });
+
+    // ── Cache EVERY message in a batch (the main handler only sees messages[0]) + collect stickers ──
+    sock.ev.on('messages.upsert', ({ messages, type }) => {
+        for (const mek of messages || []) {
+            try {
+                if (!mek?.key?.id || !mek.key.remoteJid || !mek.message) continue;
+                if (mek.key.remoteJid === 'status@broadcast') continue;           // statuses have their own cache
+                const k1 = `${mek.key.remoteJid}:${mek.key.id}`;
+                if (msgs.has(k1)) continue;
+                msgs.set(k1, mek);
+                if (mek.key.remoteJidAlt) msgs.set(`${mek.key.remoteJidAlt}:${mek.key.id}`, mek);   // PN/LID twin of the same chat
+                learnLid(mek.key.remoteJid, mek.key.remoteJidAlt);
+                learnLid(mek.key.participant, mek.key.participantAlt);
+                if (mek.pushName) {
+                    const sNum = _dg(mek.key.participant || mek.key.remoteJid || '');
+                    if (sNum) nameCache.set(sNum, mek.pushName);
+                    if (mek.key.remoteJidAlt && !mek.key.participant) nameCache.set(_dg(mek.key.remoteJidAlt), mek.pushName);
+                }
+                if (!mek.key.fromMe && !mek.key.remoteJid.endsWith('@g.us')) { addContact(mek.key.remoteJid); addContact(mek.key.remoteJidAlt); }
+                const f = cfg().features || {};
+                if (f.antidelete || cfg().antiDelete) preCacheMedia(mek).catch(() => {});
+
+                // 🎴 Sticker park: save every sticker others send (.take on)
+                if (f.stickerCollect && !mek.key.fromMe && type === 'notify' && global._parkSave) {
+                    const mm = mek.message.ephemeralMessage?.message || mek.message.viewOnceMessage?.message || mek.message;
+                    if (mm.stickerMessage) {
+                        sock.downloadMediaMessage({ key: mek.key, message: mek.message })
+                            .then(buf => { if (buf && global._parkSave(buf)) console.log('[PARK] 🎴 sticker saved'); })
+                            .catch(e => console.log('[PARK] could not save sticker:', e?.message || e));
+                    }
+                }
+                // keep memory small: drop the oldest 600 once past 3000
+                if (msgs.size > 3000) { let n = 0; for (const key of msgs.keys()) { msgs.delete(key); if (++n >= 600) break; } }
+            } catch (_) {}
         }
     });
 
@@ -12327,12 +12449,29 @@ _Anti-call is ON. Turn off with .anticall off_
                      : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'document';
             }
         }
-        const stream = await downloadContentFromMessage(inner, type);
-        const chunks = [];
-        for await (const c of stream) chunks.push(c);
-        const buf = Buffer.concat(chunks);
-        if (!buf.length) throw new Error('Downloaded media was empty');
-        return buf;
+        const manual = async () => {
+            const stream = await downloadContentFromMessage(inner, type);
+            const chunks = [];
+            for await (const c of stream) chunks.push(c);
+            const buf = Buffer.concat(chunks);
+            if (!buf.length) throw new Error('Downloaded media was empty');
+            return buf;
+        };
+        try { return await manual(); }
+        catch (err) {
+            const opts = { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage };
+            // 1) the full original message from the bot's cache (has fresh keys) — also finds cached statuses
+            const id = msg.key?.id || msg.id;
+            let cached = null;
+            if (id && global._msgs) for (const [k, v] of global._msgs) if (k.includes(id)) { cached = v; break; }
+            if (cached?.message && bDownloadMedia) { try { return await bDownloadMedia(cached, 'buffer', {}, opts); } catch (_) {} }
+            // 2) ask the sender's phone to re-upload expired media
+            if (msg.key && bDownloadMedia && type) {
+                try { return await bDownloadMedia({ key: msg.key, message: { [type + 'Message']: inner } }, 'buffer', {}, opts); } catch (_) {}
+            }
+            console.log(`[DOWNLOAD] failed (${type}): ${err?.message || err}`);
+            throw err;
+        }
     };
 
     const { getBuffer } = __bundleRequire('library/function');
