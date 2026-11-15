@@ -2883,8 +2883,7 @@ module.exports = {
 👑 *Creator:* Liam
 ━━━━━━━━━━━━━━━━━━━━━
 📡 https://whatsapp.com/channel/0029VbBeZTc1t90aZjks9v2S`;
-        await sock.sendMessage(m.chat, { image: { url: config.thumbUrl }, caption: msg
-        }, { quoted: m });
+        await sock.sendMessage(m.chat, { text: msg }, { quoted: m });
         await sock.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
     }
 };
@@ -6355,23 +6354,29 @@ module.exports = [
 // ─────────────────────────────────────────────────────────────────────────────
 {
     command: 'botstatus', category: 'other',
-    execute: async (sock, m, { reply }) => {
+    execute: async (sock, m, { reply, prefix, pushname }) => {
         const up    = process.uptime();
-        const upStr = `${~~(up/86400)}d ${~~(up%86400/3600)}h ${~~(up%3600/60)}m ${~~(up%60)}s`;
+        const upStr = `${~~(up/86400)}d ${~~(up%86400/3600)}h ${~~(up%3600/60)}m`;
         const mem   = process.memoryUsage();
-        const cpu   = os.loadavg();
-        reply(
-            `👁️ *LIAM EYES Bot Status*\n\n` +
-            `╔═══════════════════════════╗\n` +
-            `║  ${sock.public ? '🌍 PUBLIC MODE' : '🔒 PRIVATE MODE'}          ║\n` +
-            `╚═══════════════════════════╝\n\n` +
-            `⚡ *Uptime:*    ${upStr}\n` +
-            `💾 *RAM Used:* ${(mem.heapUsed/1024/1024).toFixed(1)} MB / ${(mem.heapTotal/1024/1024).toFixed(1)} MB\n` +
-            `🖥️ *CPU Load:*  ${cpu[0].toFixed(2)} (1m avg)\n` +
-            `🔧 *Node:*     ${process.version}\n` +
-            `🌐 *Platform:* ${os.platform()} ${os.arch()}\n\n` +
-            `*Active Features:*\n${Object.entries(config.features||{}).filter(([,v])=>v).map(([k])=>`✅ ${k}`).join('\n')||'_(none)_'}\n\n${sig()}`
-        );
+        const ping  = Math.max(0, Date.now() - (m.messageTimestamp || 0) * 1000);
+        const cmds  = (global._PL && global._PL.count) ? global._PL.count() : (global._PL?.plugins?.size || '');
+        const feats = Object.entries(config.features||{}).filter(([,v])=>v).map(([k])=>k);
+        const box = [
+            `╔═══════════╗`,
+            `╔〚 *${config.settings?.title || '𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒'}* 〛╗`,
+            `║✫ *ᴜsᴇʀ:* ${m.pushName || pushname || 'User'}`,
+            `║✫ *ᴘʀᴇғɪx:* ${prefix || config.prefix || '.'}`,
+            `║✫ *ᴍᴏᴅᴇ:* ${sock.public ? 'ᴘᴜʙʟɪᴄ' : 'ᴘʀɪᴠᴀᴛᴇ'}`,
+            `║✫ *ᴄᴍᴅs:* ${cmds}`,
+            `║✫ *ᴘɪɴɢ:* ${ping}ᴍs`,
+            `║✫ *ʀᴀᴍ:* ${(mem.rss/1024/1024).toFixed(0)}ᴍʙ`,
+            `║✫ *ᴜᴘ:* ${upStr}`,
+            `║✫ *ʜᴏsᴛ:* ${global._hostName || 'ᴘᴀɴᴇʟ'}`,
+            `╚═══════════╝`,
+        ].join('\n');
+        const txt = `${box}\n\n*Active features:*\n${feats.length ? feats.map(k => `✅ ${k}`).join('\n') : '_(none)_'}`;
+        if (global._botImage) await sock.sendMessage(m.chat, { image: global._botImage, caption: txt });   // ← bot image: .botstatus and .menu only
+        else reply(txt);
     }
 },
 
@@ -10266,9 +10271,10 @@ const domStore = {
 
 // ── Menu thumbnail ONLY for .menu — no image on regular replies ──────────────
 const menuImage = (() => {
+    try { return fs.readFileSync(path.join(__dirname, 'Resources', 'bot_image.jpg')); } catch {
     try { return fs.readFileSync(path.join(__dirname, 'Resources', 'logo.jpg')); } catch {
         try { return fs.readFileSync(path.join(__dirname, 'Resources', 'image.jpg')); } catch { return null; }
-    }
+    } }
 })();
 
 let _jidNorm;

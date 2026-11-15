@@ -24,7 +24,22 @@ const site = (name, url) => t(async () => {
     return `HTTP ${r.status}`;
 }).then(r => `• ${name}: ${mark(r)}`);
 
-module.exports = [{
+const cfgMod = () => require('./settings');
+const lecButton = {
+    command: 'lecbutton', category: 'owner', owner: true,
+    execute: async (sock, m, { reply, args, isCreator }) => {
+        if (!isCreator) return reply('❌ Owner only.');
+        const cfg = cfgMod(); if (!cfg.features) cfg.features = {};
+        const arg = (args[0] || '').toLowerCase();
+        const on = arg === 'on' ? true : arg === 'off' ? false : cfg.features.lecbutton === false;
+        cfg.features.lecbutton = on;
+        try { cfg.saveFeatures && cfg.saveFeatures(); } catch (_) {}
+        reply(on ? '🟢 *L.E.C. style* is *ACTIVE* ✅\n_Verified WhatsApp header + VISIT L.E.C button on replies._\n\n' + sig()
+                 : '🔴 *L.E.C. style* turned *OFF*\n_Replies are plain again._\n\n' + sig());
+    },
+};
+
+module.exports = [lecButton, {
     command: 'diag', category: 'owner', owner: true,
     execute: async (sock, m, { reply, isCreator }) => {
         if (!isCreator) return reply('❌ Owner only.');

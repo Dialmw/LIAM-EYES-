@@ -431,17 +431,88 @@ async function ytVideo(url, quality = '360') {
     return { url: r.path, title: r.title, thumb: '' };
 }
 
-// ── 5. Channel branding ────────────────────────────────────────────────────
-// settings.js:  channelBrand: 'both' | 'forward' | 'card' | 'off'
-//               channelJid:   optional "120363…@newsletter" (auto-resolved from the invite link if empty)
+// ── 5. L.E.C. message style ────────────────────────────────────────────────
+// Every bot reply looks like a verified "WhatsApp" message: the bot image on top (for cards),
+// the text in the middle and a "VISIT L.E.C" button at the bottom.
+//   settings.js:  lecUrl: "https://…"   (where the button goes)   channelBrand: 'lec' | 'forward' | 'off'
+//   .lecbutton on/off   — turn the button style on/off from WhatsApp
+// If WhatsApp refuses the button, the bot falls back to a small tappable "VISIT L.E.C" card
+// and automatically pauses the button style for 30 minutes after 3 failures in a row.
+
+// bot image (Resources/bot_image.jpg + bot_thumb.jpg) shared with the rest of the bot
+const readRes = f => { try { return fs.readFileSync(path.join(__dirname, 'Resources', f)); } catch (_) { return null; } };
+const BOT_IMAGE = readRes('bot_image.jpg');
+const BOT_THUMB = readRes('bot_thumb.jpg');
+global._botImage = BOT_IMAGE;
+global._botThumb = BOT_THUMB;
+
+// Quoted "WhatsApp ✓" header (the official verified account has the JID 0@s.whatsapp.net)
+const VERIFIED_QUOTE = {
+    key: { remoteJid: 'status@broadcast', fromMe: false, id: 'LIAMEYES0VERIFIED', participant: '0@s.whatsapp.net' },
+    pushName: 'WhatsApp',
+    message: { contactMessage: {
+        displayName: 'WhatsApp',
+        vcard: 'BEGIN:VCARD\nVERSION:3.0\nN:WhatsApp;;;;\nFN:WhatsApp\nORG:WhatsApp;\nTEL;type=CELL;type=VOICE;waid=0:0\nEND:VCARD',
+    } },
+};
+
+let _bz = null;
+const baileys = async () => _bz || (_bz = await import('@whiskeysockets/baileys'));
+
+async function buildLec(sock, jid, content, options, cfg) {
+    const B = await baileys();
+    const { generateWAMessageFromContent, prepareWAMessageMedia, proto } = B.default && B.default.proto ? B.default : B;
+    const url  = cfg.lecUrl || process.env.LEC_URL || cfg.channel || 'https://whatsapp.com/channel/0029VbBeZTc1t90aZjks9v2S';
+    const text = (typeof content.text === 'string' ? content.text : content.caption) || '';
+
+    // header: the message's own photo/video, or the bot image for "cards"
+    let header = { hasMediaAttachment: false };
+    const upload = { upload: sock.waUploadToServer };
+    if (content.image) {
+        const mm = await prepareWAMessageMedia({ image: content.image }, upload);
+        header = { hasMediaAttachment: true, imageMessage: mm.imageMessage };
+    } else if (content.video) {
+        const mm = await prepareWAMessageMedia({ video: content.video, gifPlayback: !!content.gifPlayback }, upload);
+        header = { hasMediaAttachment: true, videoMessage: mm.videoMessage };
+    } else if (content.lecCard && BOT_IMAGE) {
+        const mm = await prepareWAMessageMedia({ image: BOT_IMAGE }, upload);
+        header = { hasMediaAttachment: true, imageMessage: mm.imageMessage };
+    }
+
+    const ci = { ...(content.contextInfo || {}) };
+    delete ci.externalAdReply;                              // the button replaces the old ad card
+    if (content.mentions && content.mentions.length) ci.mentionedJid = content.mentions;
+
+    const interactive = proto.Message.InteractiveMessage.create({
+        header: proto.Message.InteractiveMessage.Header.create(header),
+        body: proto.Message.InteractiveMessage.Body.create({ text }),
+        nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+            buttons: [{ name: 'cta_url', buttonParamsJson: JSON.stringify({ display_text: cfg.lecButtonText || 'VISIT L.E.C', url, merchant_url: url }) }],
+            messageParamsJson: '',
+        }),
+        contextInfo: ci,
+    });
+    const msg = generateWAMessageFromContent(jid, {
+        viewOnceMessage: { message: {
+            messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
+            interactiveMessage: interactive,
+        } },
+    }, { userJid: sock.user && sock.user.id, quoted: VERIFIED_QUOTE });
+
+    const extra = [{ tag: 'biz', attrs: {}, content: [{ tag: 'interactive', attrs: { type: 'native_flow', v: '1' },
+        content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }] }] }];
+    if (!jid.endsWith('@g.us')) extra.push({ tag: 'bot', attrs: { biz_bot: '1' } });
+    return { msg, extra };
+}
+
 function installChannelBranding(sock, getCfg) {
-    if (!sock || sock.__channelBrand) return sock?.__channelBrand;
+    if (!sock || sock.__channelBrand) return sock && sock.__channelBrand;
     const cfg = () => { try { return getCfg() || {}; } catch (_) { return {}; } };
-    const state = { jid: null, name: null, tried: false };
+    const state = { jid: null, name: null, fails: 0, pausedUntil: 0 };
+    const url = () => cfg().lecUrl || process.env.LEC_URL || cfg().channel || '';
 
-    const inviteUrl = () => cfg().channel || cfg().autoJoinChannel || '';
-    const inviteCode = () => (inviteUrl().match(/channel\/([A-Za-z0-9_-]+)/) || [])[1];
-
+    // optional "Forwarded from channel" header (only used when channelBrand = 'forward')
+    const inviteCode = () => ((cfg().channel || cfg().autoJoinChannel || '').match(/channel\/([A-Za-z0-9_-]+)/) || [])[1];
     async function resolve() {
         const manual = cfg().channelJid || process.env.CHANNEL_JID;
         if (manual && /@newsletter$/.test(manual)) { state.jid = manual; state.name = state.name || cfg().botName || 'LIAM EYES'; return state; }
@@ -450,57 +521,65 @@ function installChannelBranding(sock, getCfg) {
         if (!code || typeof sock.newsletterMetadata !== 'function') return state;
         try {
             const md = await sock.newsletterMetadata('invite', code);
-            if (md?.id) { state.jid = md.id; state.name = md.name || md.thread_metadata?.name?.text || 'LIAM EYES'; log('channel resolved:', state.name); }
+            if (md && md.id) { state.jid = md.id; state.name = md.name || 'LIAM EYES'; }
         } catch (e) { log('channel lookup failed:', e.message); }
         return state;
     }
 
-    const mode = () => (cfg().channelBrand || process.env.CHANNEL_BRAND || 'both').toLowerCase();
+    const brand = () => {
+        const b = String(cfg().channelBrand || process.env.CHANNEL_BRAND || 'lec').toLowerCase();
+        return (b === 'both' || b === 'card' || b === 'lec') ? 'lec' : b;        // old "both"/"card" values now mean the L.E.C. style
+    };
     const orig = sock.sendMessage.bind(sock);
 
-    sock.sendMessage = (jid, content, options) => {
+    const stylable = (jid, c) => {
+        if (!c || typeof c !== 'object' || typeof jid !== 'string') return false;
+        if (jid.endsWith('@newsletter') || jid.endsWith('@broadcast')) return false;
+        if (c.react || c.delete || c.edit || c.poll || c.forward || c.pin || c.disappearingMessagesInChat || c.sticker || c.audio ||
+            c.document || c.contacts || c.location || c.buttons || c.sections || c.templateButtons || c.interactiveButtons ||
+            c.viewOnce || c.ptv || c.noLec) return false;
+        const t = typeof c.text === 'string' ? c.text : (c.image || c.video ? (c.caption || '') : null);
+        if (t === null || t.length > 3500) return false;
+        if (typeof c.text === 'string' && !c.text.trim()) return false;
+        return true;
+    };
+
+    sock.sendMessage = async (jid, content, options) => {
+        const mode = brand();
         try {
-            const mm = mode();
-            if (mm !== 'off' && content && typeof content === 'object' && typeof jid === 'string' &&
-                !jid.endsWith('@newsletter') && jid !== 'status@broadcast' &&
-                !content.react && !content.delete && !content.edit && !content.poll &&
-                !content.forward && !content.disappearingMessagesInChat && !content.pin) {
-
-                const hasText   = typeof content.text === 'string';
-                const hasMedia  = content.image || content.video || content.document || content.audio;
-                const isSticker = !!content.sticker;
-                if (hasText || hasMedia || isSticker) {
+            if (mode === 'lec' && (cfg().features || {}).lecbutton !== false && Date.now() > state.pausedUntil && stylable(jid, content)) {
+                try {
+                    const { msg, extra } = await buildLec(sock, jid, content, options, cfg());
+                    await sock.relayMessage(jid, msg.message, { messageId: msg.key.id, additionalNodes: extra });
+                    state.fails = 0;
+                    return msg;
+                } catch (e) {
+                    state.fails++;
+                    log(`L.E.C. button failed (${state.fails}): ${e && e.message || e}`);
+                    if (state.fails >= 3) { state.pausedUntil = Date.now() + 30 * 60 * 1000; state.fails = 0; log('L.E.C. button paused for 30 min — using the small card instead'); }
+                    // fallback: normal message + small tappable "VISIT L.E.C" card
                     const ci = { ...(content.contextInfo || {}) };
-
-                    if ((mm === 'forward' || mm === 'both') && state.jid && !ci.forwardedNewsletterMessageInfo) {
-                        ci.isForwarded = true;
-                        ci.forwardingScore = 1;
-                        ci.forwardedNewsletterMessageInfo = {
-                            newsletterJid: state.jid, newsletterName: state.name || 'LIAM EYES',
-                            serverMessageId: 100 + Math.floor(Math.random() * 900),
-                        };
-                    }
-
-                    const url = inviteUrl();
-                    if ((mm === 'card' || mm === 'both') && url && !isSticker && !content.audio) {
-                        const ad = { ...(ci.externalAdReply || {}) };
-                        ad.sourceUrl = url;                                       // ← tap = open the channel
-                        ad.title = ad.title || '📢 Tap to join our channel';
-                        ad.body  = ad.body  || cfg().botName || 'LIAM EYES';
-                        if (!ad.thumbnailUrl && !ad.thumbnail && cfg().thumbUrl) ad.thumbnailUrl = cfg().thumbUrl;
-                        ad.mediaType = 1;
-                        ad.renderLargerThumbnail = false;
-                        ad.showAdAttribution = false;
-                        ci.externalAdReply = ad;
-                    }
-                    content = { ...content, contextInfo: ci };
+                    ci.externalAdReply = { title: 'VISIT L.E.C', body: cfg().botName || 'LIAM EYES', sourceUrl: url(), mediaType: 1,
+                        renderLargerThumbnail: false, showAdAttribution: false, ...(BOT_THUMB ? { thumbnail: BOT_THUMB } : {}) };
+                    const { lecCard, ...plain } = content;
+                    const body = (lecCard && BOT_IMAGE && typeof plain.text === 'string') ? { image: BOT_IMAGE, caption: plain.text, contextInfo: ci } : { ...plain, contextInfo: ci };
+                    return orig(jid, body, { ...(options || {}), quoted: VERIFIED_QUOTE });
                 }
             }
-        } catch (_) { /* never block a send because of branding */ }
+            if (mode === 'forward' && typeof jid === 'string' && !jid.endsWith('@newsletter') && jid !== 'status@broadcast' &&
+                content && typeof content === 'object' && !content.react && !content.delete && !content.edit && !content.poll &&
+                !content.forward && state.jid && (typeof content.text === 'string' || content.image || content.video)) {
+                const ci = { ...(content.contextInfo || {}) };
+                ci.isForwarded = true; ci.forwardingScore = 1;
+                ci.forwardedNewsletterMessageInfo = { newsletterJid: state.jid, newsletterName: state.name || 'LIAM EYES', serverMessageId: 100 + Math.floor(Math.random() * 900) };
+                return orig(jid, { ...content, contextInfo: ci }, options);
+            }
+        } catch (_) { /* never block a send because of styling */ }
         return orig(jid, content, options);
     };
 
     sock.__channelBrand = { resolve, state };
+    global._lecCard = (jid, content, options) => sock.sendMessage(jid, { ...content, lecCard: true }, options);   // bot-image card helper
     return sock.__channelBrand;
 }
 
@@ -509,7 +588,7 @@ module.exports = {
     ensureYtdlp, ytdlpDownload, fetchBuffer,
     socialDownload, sendDownloaded, ytAudio, ytVideo,
     p_tikwm, p_cobalt,
-    installChannelBranding,
+    installChannelBranding, BOT_IMAGE, BOT_THUMB, VERIFIED_QUOTE,
 };
 
 // warm up in the background so the first command is fast

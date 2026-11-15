@@ -121,7 +121,9 @@ const settings = {
     autoJoinChannel: "https://whatsapp.com/channel/0029VbBeZTc1t90aZjks9v2S",
     // How replies point to your channel: "both" = Forwarded-from-channel header + tap-to-join card,
     // "forward", "card", or "off".
-    channelBrand: "both",
+    channelBrand: "lec",   // "lec" = verified WhatsApp look + VISIT L.E.C button, "forward", or "off"
+    lecUrl: "",            // ← put your L.E.C. website link here (the button opens it; falls back to the channel if empty)
+    lecButtonText: "VISIT L.E.C",
     pairingSite: "https://liam-scanner.onrender.com/pair",
     github:      "https://github.com/Dialmw/LIAM-EYES",
 
@@ -184,7 +186,9 @@ const config = {
     tagline:          S.tagline,
     autoJoinChannel:  S.channel,
     channel:          S.channel,
-    channelBrand:     S.channelBrand || 'both',   // 'both' | 'forward' | 'card' | 'off'
+    channelBrand:     S.channelBrand || 'lec',    // 'lec' | 'forward' | 'off'
+    lecUrl:           S.lecUrl || process.env.LEC_URL || '',
+    lecButtonText:    S.lecButtonText || 'VISIT L.E.C',
     channelJid:       S.channelJid || '',         // optional 120363…@newsletter (auto-resolved if empty)
     status:           { public: S.mode === 'public', terminal: true },
     features:         S.features,
