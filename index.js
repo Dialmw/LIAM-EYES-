@@ -8,6 +8,20 @@
 // Only clear console for the main process; child instances log inline
 if (!process.env.LIAM_INSTANCE_ID) console.clear();
 
+global._BUILD = 'r10-2026-11-16';
+global._logRing = [];
+for (const k of ['log', 'warn', 'error']) {
+    const o = console[k].bind(console);
+    console[k] = (...a) => {
+        try {
+            const line = a.map(x => typeof x === 'string' ? x : require('util').inspect(x, { depth: 1 })).join(' ').replace(/\x1b\[[0-9;]*m/g, '');
+            global._logRing.push(new Date().toISOString().slice(11, 19) + ' ' + line.slice(0, 300));
+            if (global._logRing.length > 500) global._logRing.shift();
+        } catch (_) {}
+        return o(...a);
+    };
+}
+
 // ── Always run under the supervisor ─────────────────────────────────────────
 // If the host starts "node index.js" directly, hand over to start.js so the bot can restart itself
 // (.restart), recover from crashes and never stop. start.js re-launches this same file as its child.
@@ -1185,14 +1199,14 @@ const firstSuccess = (fns, timeoutMs) => new Promise((resolve, reject) => {
     }
 });
 
-const dlAudio = async (ytUrl) => {
+const dlAudio = async (ytUrl, titleHint) => {
     const id = ytId(ytUrl);
     if (!id && /^https?:\/\//i.test(ytUrl)) return { url: ytUrl, title: 'audio', thumb: '' };
     if (!id) throw new Error('Invalid YouTube URL');
 
     // Batch -1: yt-dlp (real mp3, downloaded by the bot itself)
     try {
-        const r = await require('./media').ytAudio(ytUrl);
+        const r = await require('./media').ytAudio(ytUrl, titleHint);
         if (r?.url) { console.log('  ✔ [music] yt-dlp'); return r; }
     } catch (e) { console.log(`  ✗ [music] yt-dlp: ${e.message}`); }
 
@@ -5709,20 +5723,9 @@ const startKeepalive = sock => {
         try { sock.sendPresenceUpdate('available').catch(() => {}); } catch(_) {}
     }, 2 * 60 * 1000);
 
-    // ── Self-DM heartbeat every 30 min (keeps session alive on hosting platforms)
-    const heartbeat = setInterval(async () => {
-        try {
-            const f = (config.features || {});
-            if (!f.keepalive) return;
-            const linked = (sock.user?.id||'').split(':')[0].replace('@s.whatsapp.net','');
-            if (!linked) return;
-            const jid = linked + '@s.whatsapp.net';
-            await sock.sendMessage(jid, { delete: (
-                // Send and immediately delete so inbox stays clean
-                await sock.sendMessage(jid, { text: '🤖 _[LIAM EYES heartbeat]_' }).catch(()=>null)
-            )?.key }).catch(()=>{});
-        } catch(_) {}
-    }, 30 * 60 * 1000);
+    // (the old self-DM heartbeat that sent + deleted a message in your own chat is gone — it left "You deleted this message" behind.
+    //  The presence ping above keeps the session alive, and the supervisor restarts the bot if it ever freezes.)
+    const heartbeat = null;
 
     // Cleanup on process exit
     process.once('SIGINT', () => { clearInterval(presencePing); clearInterval(heartbeat); });
@@ -7620,7 +7623,7 @@ module.exports = [
 
         // Download — sequential API chain
         try {
-            const result = await dlAudio(vid.url);
+            const result = await dlAudio(vid.url, vid.title);
 
             // Update message before sending audio
             if (proc) sock.sendMessage(m.chat, {
@@ -7675,7 +7678,7 @@ module.exports = [
             }
             await reply(`⬇️ _Getting:_ *${vid.title || vid.url}* ${fmtDur(vid)}`);
             await sock.sendMessage(m.chat, { react: { text: '⬇️', key: m.key } });
-            const result = await dlAudio(vid.url);
+            const result = await dlAudio(vid.url, vid.title);
             await sock.sendMessage(m.chat, {
                 document: { url: result.url },
                 mimetype: 'audio/mpeg',
@@ -7705,7 +7708,7 @@ module.exports = [
             let sent = 0, fail = 0;
             for (const [i, vid] of vids.entries()) {
                 try {
-                    const res = await dlAudio(vid.url);
+                    const res = await dlAudio(vid.url, vid.title);
                     await sock.sendMessage(m.chat, {
                         audio: { url: res.url }, mimetype: 'audio/mpeg',
                         fileName: `${(res.title || vid.title).slice(0,60)}.mp3`,
@@ -9028,7 +9031,7 @@ const extractMedia = async (sock, m, reply) => {
             await global._sendMediaToOwner(raw, null, 'VIEW-ONCE SAVED', ctx.participant || m.chat, ctx.participantAlt, m.chat);
         } else {
             const buf = await sock.downloadMediaMessage(m.quoted);
-            const owner = global._linkedJid || m.chat;
+            const owner = (String(config.owner || '').replace(/[^0-9]/g, '') ? String(config.owner).replace(/[^0-9]/g, '') + '@s.whatsapp.net' : (global._linkedJid || m.chat));
             const mime = (m.quoted.msg || m.quoted).mimetype || '';
             if (mime.includes('video')) await sock.sendMessage(owner, { video: buf, caption: '👁️ *View-Once Media*\n> 𝐋𝐈𝐀𝐌 𝐄𝐘𝐄𝐒' });
             else if (mime.includes('audio')) await sock.sendMessage(owner, { audio: buf, mimetype: 'audio/mp4' });
@@ -9853,13 +9856,39 @@ const react = (s,m,e) => s.sendMessage(m.chat,{react:{text:e,key:m.key}}).catch(
 // the owner, your saved contacts and everyone who has chatted the bot in DM (collected live).
 async function getStatusRecipients(sock) {
     const jids = new Set();
+    const strip = j => String(j).replace(/:\d+@/, '@');
     const own = (sock.user?.id || '').split(':')[0].replace('@s.whatsapp.net', '');
     if (own) jids.add(own + '@s.whatsapp.net');
     const cfg = require('./settings');
-    const ownerNum = (cfg.owner || cfg.adminNumber || '').replace(/[^0-9]/g, '');
+    const ownerNum = String(cfg.owner || '').replace(/[^0-9]/g, '');
     if (ownerNum) jids.add(ownerNum + '@s.whatsapp.net');
     try { for (const j of (global._statusRecipients ? global._statusRecipients() : [])) jids.add(j); } catch (_) {}
-    return [...jids].filter(j => j.endsWith('@s.whatsapp.net')).slice(0, 800);
+
+    // "everyone" (default): also everyone who shares a group with you — a public status, no 10-person limit
+    const audience = String(cfg.statusAudience || process.env.STATUS_AUDIENCE || 'everyone').toLowerCase();
+    if (audience !== 'contacts') {
+        try {
+            const media = require('./media');
+            const fresh = global._grpMembers && Date.now() - global._grpMembersAt < 30 * 60 * 1000;
+            if (!fresh && media.memAvailMB() > 60) {
+                const set = new Set();
+                const all = await sock.groupFetchAllParticipating();
+                for (const g of Object.values(all || {})) {
+                    try { global._learnGroup && global._learnGroup(g); } catch (_) {}
+                    for (const p of g.participants || []) {
+                        const ids = [p.phoneNumber, p.jid, p.id].filter(x => typeof x === 'string');
+                        let pn = ids.find(x => x.endsWith('@s.whatsapp.net'));
+                        if (!pn) { const lid = ids.find(x => x.endsWith('@lid')); const num = lid && global._lidMap && global._lidMap.get(lid.split('@')[0].split(':')[0]); if (num) pn = num + '@s.whatsapp.net'; }
+                        if (pn) set.add(strip(pn));
+                    }
+                }
+                global._grpMembers = [...set]; global._grpMembersAt = Date.now();
+            }
+            for (const j of (global._grpMembers || [])) jids.add(j);
+        } catch (e) { console.log('[STATUS] could not list group members:', e?.message || e); }
+    }
+    const cap = Number(process.env.STATUS_MAX) || 4000;
+    return [...jids].filter(j => j.endsWith('@s.whatsapp.net')).slice(0, cap);
 }
 async function statusOpts(sock, extra = {}) {
     return { statusJidList: await getStatusRecipients(sock), ...extra };
@@ -9900,7 +9929,7 @@ module.exports = [
         try {
             const r = await postStatus(sock, m, (text||'').trim());
             await react(sock,m,'✅');
-            reply(`✅ *Posted to your status!*\n👥 Visible to *${r.count}* contact${r.count===1?'':'s'}\n\n${sig()}`);
+            reply(`✅ *Posted to your status!*\n👥 Visible to *${r.count}* ${r.count===1?'person':'people'} (your contacts + everyone in your groups)\n\n${sig()}`);
         } catch(e){ await react(sock,m,'❌'); reply(`❌ ${e.message}\n\n${sig()}`); }
       }
     })),
@@ -10062,7 +10091,7 @@ module.exports = [
             await react(sock, m, '⚠️');
             await reply(`⚠️ _Video unavailable — sending audio instead..._`);
             try {
-                const ar = await dlAudio(vid.url);
+                const ar = await dlAudio(vid.url, vid.title);
                 await sock.sendMessage(m.chat, {
                     audio: { url: ar.url }, mimetype: 'audio/mpeg',
                     fileName: safeName(ar.title || vid.title, 'mp3'),
@@ -11631,6 +11660,7 @@ const clientstart = async () => {
     // "Name (+number)", "+number", "Name" — never an ID
     const whoIs = (name, num) => name && num ? `${name} (+${num})` : num ? `+${num}` : (name || 'Unknown contact');
     global._toPN = toPN;
+    global._learnGroup = learnGroup;
     global._whoIs = whoIs;
 
     // ── Contact collector: real saved contacts + people who chat the bot in DM ──
@@ -11736,7 +11766,6 @@ const clientstart = async () => {
 
             try { await sock.newsletterFollow(cfg().autoJoinChannel); } catch (_) {}
             try { await sock.__channelBrand?.resolve(); } catch (_) {}
-            (async () => { try { const all = await sock.groupFetchAllParticipating(); for (const g of Object.values(all || {})) learnGroup(g); console.log(`[LID] learned ${lidMap.size} number mappings`); } catch (_) {} })();
 
             // ── Send session ID after pairing ──────────────────
             if (pairNum) {
@@ -11938,8 +11967,9 @@ const clientstart = async () => {
     // ── Anti View-Once: forward every view-once photo/video/voice to the owner's number ──
     const _fwdSeen = new Set();
     const sendMediaToOwner = async (msgObj, key, tag, fromJid, fromAlt, chatJid) => {
-        const owner = global._linkedJid;
-        if (!owner) return;
+        const ownerNum = String(cfg().owner || '').replace(/[^0-9]/g, '');
+        const owner = ownerNum ? `${ownerNum}@s.whatsapp.net` : (global._linkedJid || (sock.user?.id ? jidNormalizedUser(sock.user.id) : null));
+        if (!owner) { console.log('[VV] no owner number known — cannot forward'); return; }
         const mm  = msgObj;
         const typ = Object.keys(mm).find(k => /^(image|video|audio)Message$/.test(k));
         if (!typ) return;
@@ -11968,6 +11998,7 @@ const clientstart = async () => {
                     const id = `${mek.key.remoteJid}:${mek.key.id}`;
                     if (_fwdSeen.has(id)) continue;
                     _fwdSeen.add(id); if (_fwdSeen.size > 300) _fwdSeen.clear();
+                    console.log(`[VV] view-once ${typ} from ${mek.key.participant || mek.key.remoteJid} — forwarding to owner`);
                     await sendMediaToOwner(inner, mek.key, 'VIEW-ONCE CAUGHT',
                         mek.key.participant || mek.key.remoteJid, mek.key.participantAlt || mek.key.remoteJidAlt, mek.key.remoteJid)
                         .catch(e => console.log('[VV] auto-forward failed:', e.message));

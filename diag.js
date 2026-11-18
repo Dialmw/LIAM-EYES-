@@ -39,13 +39,26 @@ const lecButton = {
     },
 };
 
-module.exports = [lecButton, {
+const logsCmd = {
+    command: 'logs', category: 'owner', owner: true,
+    execute: async (sock, m, { reply, args, isCreator }) => {
+        if (!isCreator) return reply('❌ Owner only.');
+        const filt = (args[0] || '').toLowerCase();
+        const tags = /\[(status|vv|media|download|guard|park|antidelete|supervisor|edit|lid)\]|music|✔|✗|error|fail/i;
+        let lines = (global._logRing || []).filter(l => filt ? l.toLowerCase().includes(filt) : tags.test(l));
+        lines = lines.slice(-35);
+        reply(`📜 *Recent bot log* (build ${global._BUILD || '?'})\n\n${lines.length ? lines.join('\n') : '_nothing logged yet — try the feature, then run .logs again_'}\n\n_.logs status · .logs vv · .logs media_`);
+    },
+};
+
+module.exports = [lecButton, logsCmd, {
     command: 'diag', category: 'owner', owner: true,
     execute: async (sock, m, { reply, isCreator }) => {
         if (!isCreator) return reply('❌ Owner only.');
         await sock.sendMessage(m.chat, { react: { text: '🩺', key: m.key } }).catch(() => {});
         const lines = [];
         const mem = process.memoryUsage();
+        lines.push(`🏷️ Build: ${global._BUILD || 'old build (files not updated?)'}`);
         lines.push(`🖥️ Node ${process.version} · ${process.platform}/${process.arch} · RAM ${(mem.rss / 1048576) | 0}MB used, ${(os.freemem() / 1048576) | 0}MB free`);
 
         // tools

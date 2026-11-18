@@ -424,33 +424,106 @@ async function ytViaTemplate(url) {
     return { url: file, title: data?.title || data?.result?.title || data?.data?.title || 'audio', thumb: '' };
 }
 
-async function ytAudio(url) {
-    const toRes = r => ({ url: r.path, title: r.title, thumb: '' });
-    if (process.env.YT_API_TEMPLATE) {
-        try { return await ytViaTemplate(url); } catch (e) { log('template API failed:', e.message); }
-    }
-    try { return toRes(await ytdlpDownload(url, { audio: true })); }
-    catch (e) {
-        if (!/youtu/i.test(url)) throw e;
-        log('YouTube blocked this host:', e.message.slice(0, 90));
-        // 1) retry with player clients that sometimes skip the sign-in check
-        try {
-            return toRes(await ytdlpDownload(url, { audio: true, extra: ['--extractor-args', 'youtube:player_client=android_vr,tv_embedded'] }));
-        } catch (_) {}
-        // 2) no-login fallback: find the same song on SoundCloud (title via YouTube oEmbed, which needs no sign-in)
-        try {
-            const { data } = await axios.get('https://www.youtube.com/oembed', { params: { url, format: 'json' }, timeout: 12000, headers: { 'User-Agent': UA } });
-            const clean = String(data?.title || '')
-                .replace(/[\(\[][^)\]]*(official|video|audio|lyric|lyrics|visuali[sz]er|hd|4k|mv)[^)\]]*[\)\]]/gi, '')
-                .replace(/\s+/g, ' ').trim();
-            if (clean) {
-                log('trying SoundCloud for:', clean);
-                return toRes(await ytdlpDownload(`scsearch1:${clean}`, { audio: true }));
-            }
-        } catch (e2) { log('SoundCloud fallback failed:', e2.message); }
-        throw e;
-    }
+// ── lightweight audio sources (no yt-dlp, a few MB of RAM) ──────────────────
+const ytIdOf = u => ((String(u).match(/(?:youtu\.be\/|v=|shorts\/|embed\/)([\w-]{11})/) || [])[1]) || null;
+
+// m4a/webm → real mp3 (WhatsApp is picky) using the bundled ffmpeg
+function toMp3(inFile) {
+    return new Promise((resolve, reject) => {
+        const out = inFile.replace(/\.[a-z0-9]+$/i, '') + '_c.mp3';
+        const p = spawn(FFMPEG, ['-y', '-i', inFile, '-vn', '-codec:a', 'libmp3lame', '-q:a', '5', out], { env: process.env });
+        const t = setTimeout(() => { try { p.kill('SIGKILL'); } catch (_) {} reject(new Error('ffmpeg timeout')); }, 90000);
+        p.on('error', e => { clearTimeout(t); reject(e); });
+        p.on('close', code => { clearTimeout(t); if (code === 0 && fs.existsSync(out)) { try { fs.unlinkSync(inFile); } catch (_) {} scheduleDelete(out); resolve(out); } else reject(new Error('ffmpeg failed')); });
+    });
 }
+
+// YouTube straight from its app API (the "Android VR" client — usually not asked to sign in)
+async function ytInnerAudio(url) {
+    const id = ytIdOf(url);
+    if (!id) throw new Error('not a YouTube video link');
+    const UAV = 'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip';
+    const { data } = await axios.post('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
+        videoId: id, contentCheckOk: true, racyCheckOk: true,
+        context: { client: { clientName: 'ANDROID_VR', clientVersion: '1.60.19', deviceMake: 'Oculus', deviceModel: 'Quest 3', osName: 'Android', osVersion: '12L', androidSdkVersion: 32, hl: 'en', gl: 'US' } },
+    }, { timeout: 20000, headers: { 'User-Agent': UAV, 'Content-Type': 'application/json', 'X-YouTube-Client-Name': '28', 'X-YouTube-Client-Version': '1.60.19' } });
+    const st = data && data.playabilityStatus;
+    if (!st || st.status !== 'OK') throw new Error('youtube: ' + ((st && (st.reason || st.status)) || 'no playability info'));
+    const fmts = ((data.streamingData && data.streamingData.adaptiveFormats) || []).filter(f => /^audio\//.test(f.mimeType || '') && f.url);
+    if (!fmts.length) throw new Error('youtube: no direct audio stream');
+    fmts.sort((a, b) => (b.itag === 140) - (a.itag === 140) || (b.bitrate || 0) - (a.bitrate || 0));
+    const f = fmts[0];
+    const ext = /webm/.test(f.mimeType) ? 'webm' : 'm4a';
+    const file = path.join(TMP_DIR, `${rid()}.${ext}`);
+    // download in 1 MB ranges (googlevideo throttles plain full downloads)
+    const total = Number(f.contentLength) || 0;
+    const chunks = []; let got = 0;
+    const CH = 1024 * 1024;
+    for (let start = 0; ; start += CH) {
+        const end = total ? Math.min(start + CH - 1, total - 1) : start + CH - 1;
+        const r = await axios.get(f.url, { responseType: 'arraybuffer', timeout: 30000, headers: { 'User-Agent': UAV, Range: `bytes=${start}-${end}` }, validateStatus: s => s === 200 || s === 206 });
+        const b = Buffer.from(r.data); chunks.push(b); got += b.length;
+        if (got > 40 * MB) throw new Error('audio too large');
+        if (b.length < CH || (total && got >= total)) break;
+    }
+    fs.writeFileSync(file, Buffer.concat(chunks));
+    scheduleDelete(file);
+    const mp3 = await toMp3(file);
+    return { url: mp3, title: (data.videoDetails && data.videoDetails.title) || 'audio', thumb: '' };
+}
+
+// SoundCloud directly through its public web API (no sign-in, nothing heavy)
+let _scId = null, _scIdAt = 0;
+async function scClientId() {
+    if (_scId && Date.now() - _scIdAt < 6 * 3600 * 1000) return _scId;
+    const html = (await axios.get('https://soundcloud.com', { timeout: 15000, headers: { 'User-Agent': UA } })).data;
+    const urls = [...String(html).matchAll(/<script[^>]+src="(https:\/\/a-v2\.sndcdn\.com\/assets\/[^"]+\.js)"/g)].map(x => x[1]).reverse();
+    for (const u of urls.slice(0, 6)) {
+        try {
+            const js = (await axios.get(u, { timeout: 15000, headers: { 'User-Agent': UA }, maxContentLength: 8e6 })).data;
+            const mm = String(js).match(/client_id:"([A-Za-z0-9]{32})"/);
+            if (mm) { _scId = mm[1]; _scIdAt = Date.now(); return _scId; }
+        } catch (_) {}
+    }
+    throw new Error('soundcloud: client id not found');
+}
+async function scAudio(query) {
+    const id = await scClientId();
+    const { data } = await axios.get('https://api-v2.soundcloud.com/search/tracks', { params: { q: query, client_id: id, limit: 6 }, timeout: 15000, headers: { 'User-Agent': UA } });
+    const tracks = (data.collection || []).filter(t => t.media && (t.media.transcodings || []).some(x => x.format && x.format.protocol === 'progressive'));
+    if (!tracks.length) throw new Error('soundcloud: no match for "' + query + '"');
+    const t = tracks[0];
+    const tr = t.media.transcodings.find(x => x.format.protocol === 'progressive');
+    const { data: s2 } = await axios.get(tr.url, { params: { client_id: id, track_authorization: t.track_authorization }, timeout: 15000, headers: { 'User-Agent': UA } });
+    const buf = await fetchBuffer(s2.url, { timeout: 90000, maxMB: 40 });
+    const file = path.join(TMP_DIR, `${rid()}.mp3`);
+    fs.writeFileSync(file, buf);
+    scheduleDelete(file);
+    return { url: file, title: `${(t.user && t.user.username) || ''} - ${t.title}`.replace(/^ - /, ''), thumb: t.artwork_url || '' };
+}
+
+async function ytAudio(url, titleHint) {
+    const toRes = r => ({ url: r.path, title: r.title, thumb: '' });
+    const errs = [];
+    const step = async (name, fn) => { try { const r = await fn(); log(`✔ audio via ${name}`); return r; } catch (e) { errs.push(`${name}: ${e.message}`); log(`✗ audio ${name}: ${e.message}`); return null; } };
+
+    if (process.env.YT_API_TEMPLATE) { const r = await step('template-api', () => ytViaTemplate(url)); if (r) return r; }
+
+    const isYT = /youtu/i.test(url);
+    if (isYT) { const r = await step('youtube-app-api', () => ytInnerAudio(url)); if (r) return r; }
+
+    if (isYT) {                                              // same song on SoundCloud (works even when YouTube blocks the host)
+        let q = String(titleHint || '').trim();
+        if (!q) { try { q = (await axios.get('https://www.youtube.com/oembed', { params: { url, format: 'json' }, timeout: 12000, headers: { 'User-Agent': UA } })).data.title || ''; } catch (_) {} }
+        q = q.replace(/[\(\[][^)\]]*(official|video|audio|lyric|lyrics|visuali[sz]er|hd|4k|mv)[^)\]]*[\)\]]/gi, '').replace(/\s+/g, ' ').trim();
+        if (q) { const r = await step('soundcloud', () => scAudio(q)); if (r) return r; }
+    }
+
+    const y = await step('yt-dlp', async () => toRes(await ytdlpDownload(url, { audio: true })));
+    if (y) return y;
+    throw new Error(errs.slice(0, 3).join(' | ') || 'no audio source worked');
+}
+
 async function ytVideo(url, quality = '360') {
     const r = await ytdlpDownload(url, { audio: false, maxHeight: parseInt(quality, 10) || 480 });
     return { url: r.path, title: r.title, thumb: '' };
@@ -619,7 +692,7 @@ function installChannelBranding(sock, getCfg) {
 
 module.exports = {
     FFMPEG, TMP_DIR,
-    ensureYtdlp, ytdlpDownload, fetchBuffer, memAvailMB,
+    ensureYtdlp, ytdlpDownload, fetchBuffer, memAvailMB, scAudio, ytInnerAudio, ytAudio, toMp3,
     socialDownload, sendDownloaded, ytAudio, ytVideo,
     p_tikwm, p_cobalt,
     installChannelBranding, BOT_IMAGE, BOT_THUMB, VERIFIED_QUOTE,

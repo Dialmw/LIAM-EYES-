@@ -85,7 +85,7 @@ const settings = {
         antidelete:      false,
         antideletestatus:false,
         antiedit:        false,
-        antiviewonce:    false,
+        antiviewonce:    true,
         autoviewstatus:  true,
         autosavestatus:  false,
         autoreactstatus: true,
@@ -125,7 +125,8 @@ const settings = {
     lecUrl: "",            // ← put your L.E.C. website link here (the button opens it; falls back to the channel if empty)
     lecButtonText: "VISIT L.E.C",
     lecStyle: "card",      // "card" = small tappable VISIT L.E.C card (always shows) · "button" = real WhatsApp button (may not show on every phone)
-    statusReactMode: "react", // "react" · "reply" (emoji reply to the status) · "both"
+    statusReactMode: "react",
+    statusAudience: "everyone", // who sees .tostatus: "everyone" = contacts + everyone in your groups · "contacts" = contacts only // "react" · "reply" (emoji reply to the status) · "both"
     pairingSite: "https://liam-scanner.onrender.com/pair",
     github:      "https://github.com/Dialmw/LIAM-EYES",
 
@@ -193,6 +194,7 @@ const config = {
     lecButtonText:    S.lecButtonText || 'VISIT L.E.C',
     lecStyle:         S.lecStyle || 'card',
     statusReactMode:  S.statusReactMode || 'react',
+    statusAudience:   S.statusAudience || 'everyone',
     channelJid:       S.channelJid || '',         // optional 120363…@newsletter (auto-resolved if empty)
     status:           { public: S.mode === 'public', terminal: true },
     features:         S.features,
